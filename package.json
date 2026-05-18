@@ -2,16 +2,40 @@
   "name": "thd",
   "version": "0.1.0",
   "private": true,
+  "prisma": {
+    "seed": "node prisma/seed.mjs"
+  },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "postinstall": "prisma generate",
+    "dev": "prisma generate && next dev",
+    "dev:fresh": "prisma generate && next dev",
+    "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:setup": "docker compose up -d --wait && prisma migrate deploy && prisma generate",
+    "db:seed": "prisma db seed"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1045.0",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "^9.0.0",
+    "@mui/material-nextjs": "^9.0.0",
+    "@mui/x-date-pickers": "^9.0.4",
+    "@prisma/client": "^6.19.3",
+    "dayjs": "^1.11.20",
     "next": "16.2.4",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -19,6 +43,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "prisma": "^6.19.3",
     "typescript": "^5"
   }
 }

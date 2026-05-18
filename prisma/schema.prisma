@@ -1,0 +1,272 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Example {
+  id        String   @id @default(cuid())
+  label     String
+  createdAt DateTime @default(now())
+}
+
+model EquipmentRequest {
+  id             String   @id @default(cuid())
+  /// セールスフォース等への複数回送信時の申請単位キー（UUID）
+  applicationCorrelationId String @unique
+
+  // 申請者
+  applicantName  String
+  employeeNumber String
+  companyName    String
+  departmentName String
+  address        String
+  applicantJobTitle String @default("")
+  applicantEmail    String @default("")
+  applicantPhone    String @default("")
+
+  // 利用者
+  userName          String
+  userEmployeeNumber String
+  userCompanyName    String
+  userDepartmentName String
+  userAddress        String
+  userContractType   String
+  userCostDeptName   String @default("")
+  userCostDeptCode   String @default("")
+  userEmail          String @default("")
+  userPhone          String @default("")
+
+  // 送付先
+  deliveryName        String @default("")
+  deliveryCompanyName String @default("")
+  deliveryDepartment  String @default("")
+  deliveryArea        String @default("")
+  deliveryPostalCode  String @default("")
+  deliveryAddress     String @default("")
+  deliveryBuilding    String @default("")
+  deliveryEmail       String @default("")
+  deliveryPhone       String @default("")
+
+  // PC判定
+  userStaffCategory      String
+  decisionContractType   String @default("")
+  decisionWorkContent    String @default("")
+  decisionClientEnv      String @default("")
+  licenseTechnoProApply        String
+  licenseUserSoftwareInstall   String
+  licenseTechnoProNetwork      String
+  licenseSpecCode              String
+
+  // スマホ
+  smartphoneCameraPresence       String @default("")
+  smartphoneUserIdentification   String @default("")
+  smartphoneWorkplaceUse         String @default("")
+
+  // 周辺機器
+  peripheralMonitorSize          String @default("")
+  peripheralMonitorSizeCustom    String @default("")
+  peripheralLanCableLength       String @default("")
+  peripheralLanCableLengthCustom String @default("")
+
+  // 申請内容
+  requestReason  String
+  requestDetail  String @default("")
+  lendingStartDate   DateTime @db.Date
+  expectedReturnDate DateTime @db.Date
+  createdAt      DateTime @default(now())
+
+  @@index([employeeNumber, createdAt])
+  lines          EquipmentLendingLine[]
+}
+
+model EquipmentLendingLine {
+  id            String           @id @default(cuid())
+  requestId     String
+  request       EquipmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  equipmentType String
+  sortOrder     Int              @default(0)
+
+  @@index([requestId])
+}
+
+model EquipmentReturnRequest {
+  id                  String   @id @default(cuid())
+
+  // 申請者
+  applicantName       String
+  employeeNumber      String
+  companyName         String
+  departmentName      String
+  address             String
+  applicantJobTitle   String @default("")
+  applicantEmail      String @default("")
+  applicantPhone      String @default("")
+
+  // 利用者
+  userName            String
+  userEmployeeNumber  String
+  userCompanyName     String
+  userDepartmentName  String
+  userAddress         String
+  userContractType    String
+  userCostDeptName    String @default("")
+  userCostDeptCode    String @default("")
+  userEmail           String @default("")
+  userPhone           String @default("")
+
+  // 送付先
+  deliveryName        String @default("")
+  deliveryCompanyName String @default("")
+  deliveryDepartment  String @default("")
+  deliveryArea        String @default("")
+  deliveryPostalCode  String @default("")
+  deliveryAddress     String @default("")
+  deliveryBuilding    String @default("")
+  deliveryEmail       String @default("")
+  deliveryPhone       String @default("")
+
+  // 申請内容
+  requestReason       String
+  requestDetail       String   @default("")
+  createdAt           DateTime @default(now())
+
+  @@index([employeeNumber, createdAt])
+  lines               EquipmentReturnLine[]
+}
+
+model EquipmentReturnLine {
+  id                 String   @id @default(cuid())
+  requestId          String
+  request            EquipmentReturnRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  equipmentName      String
+  lendingDueDate     DateTime @db.Date
+  expectedReturnDate DateTime @db.Date
+  sortOrder          Int      @default(0)
+
+  @@index([requestId])
+}
+
+/// 全社人員データ（Excel 全列を文字列で保持。取り込みのたび全件削除→再投入）
+model HrPersonnelRecord {
+  id     String @id @default(cuid())
+  /// 社員番号
+  employeeNumber String
+
+  employeeName     String?
+  employeeNameKana String?
+  companyCode      String?
+  companyName      String?
+  departmentCode   String?
+  departmentName  String?
+  jobTitleCode     String?
+  jobTitleName     String?
+  employeeCategoryCode String?
+  employeeCategory     String?
+  positionCode     String?
+  positionName     String?
+  occupationCode   String?
+  occupationName   String?
+  employmentTypeCode String?
+  employmentType     String?
+  groupJoinDate    String?
+  hireDate         String?
+  secondmentCompanyCode String?
+  secondmentCompanyName String?
+  secondmentDeptCode    String?
+  secondmentDeptName    String?
+  retirementCategoryCode String?
+  retirementCategory     String?
+  retirementOrderName    String?
+  retirementDate         String?
+  birthDate              String?
+  businessCompanyCode    String?
+  businessCompanyShort   String?
+  legalNameKanji         String?
+  adAccount              String?
+  systemEmail            String?
+  leaveCategory          String?
+  leaveDate              String?
+  returnScheduledDate    String?
+  recruitmentCategory    String?
+  previousCompany        String?
+  residentSiteCode       String?
+  residentSiteName       String?
+  tentativeHireCategory String?
+
+  importedAt DateTime @default(now())
+
+  @@index([employeeNumber])
+  @@index([departmentCode])
+  @@map("hr_personnel_record")
+}
+
+/// 納品先マスタ（取り込みのたび全件削除→再投入）
+model DeliverySiteMaster {
+  id String @id @default(cuid())
+
+  deliveryCompanyName String?
+  deliverySite        String?
+  searchKey           String?
+  postalCode          String?
+  address             String?
+  building            String?
+  phone               String?
+  itamLocation        String?
+
+  importedAt DateTime @default(now())
+
+  @@index([searchKey])
+  @@index([deliverySite])
+  @@map("delivery_site_master")
+}
+
+/// THD拠点マスタ（CSV取込。所属部署コード⇔送付先拠点の紐づけテーブル）
+model ThdLocation {
+  id               String   @id @default(cuid())
+  departmentCode   String
+  companyName      String?
+  departmentName   String?
+  residentSiteName String?
+  deliverySite     String?
+  area             String?
+  postalCode       String?
+  address          String?
+  buildingName     String?
+  importedAt       DateTime @default(now())
+
+  @@index([departmentCode])
+  @@index([deliverySite])
+  @@map("thd_location")
+}
+
+model MasterImportLog {
+  id        String   @id @default(cuid())
+  kind      String // HR_PERSONNEL | DELIVERY_MASTER | THD_LOCATION
+  source    String // manual | s3
+  success   Boolean
+  rowCount  Int?
+  message   String?
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+  @@map("master_import_log")
+}
+
+/// 機器貸与・返却フォーム等の選択肢（category で用途を区別）
+model ApplicationSelectOption {
+  id        String   @id @default(cuid())
+  category  String
+  code      String?
+  label     String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category, isActive, sortOrder])
+  @@map("application_select_option")
+}

@@ -12,7 +12,15 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 同梱の AWS CLI 配布物（サードパーティ JS）
+    "aws/**",
   ]),
+  {
+    rules: {
+      // 下書き復元・検索デバウンス等で effect 内 setState が多く、実務上は許容する
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
