@@ -71,7 +71,11 @@ export type LendingPrefillReason = {
   peripheralLanCableLengthCustom: string;
 };
 
-export type LendingPrefillLine = { id: string; equipmentType: string };
+export type LendingPrefillLine = {
+  id: string;
+  equipmentType: string;
+  assignedUserEmployeeNumber?: string;
+};
 
 /** API 応答・localStorage 下書きと互換なプリフィル形状 */
 export type LendingRequestPrefillPayload = {
@@ -94,18 +98,42 @@ function inferMsOfficeEditionForPrefill(
   return DEFAULT_MS_OFFICE_STANDARD;
 }
 
-function deliveryMatchesUser(r: EquipmentRequest): boolean {
-  return (
-    r.deliveryName.trim() === r.userName.trim() &&
-    r.deliveryCompanyName.trim() === r.userCompanyName.trim() &&
-    r.deliveryDepartment.trim() === r.userDepartmentName.trim() &&
-    r.deliveryAddress.trim() === r.userAddress.trim() &&
-    r.deliveryEmail.trim() === r.userEmail.trim() &&
-    r.deliveryPhone.trim() === r.userPhone.trim() &&
-    r.deliveryArea.trim() === "" &&
-    r.deliveryPostalCode.trim() === "" &&
-    r.deliveryBuilding.trim() === ""
-  );
+function deliveryFromRecord(record: EquipmentRequest): LendingPrefillDelivery {
+  const sameAsUser = record.deliverySameAsUser;
+  const deliveryEmployeeNumber =
+    record.deliveryEmployeeNumber.trim() ||
+    (sameAsUser ? record.userEmployeeNumber : "") ||
+    (record.deliveryName.trim() === record.userName.trim() ? record.userEmployeeNumber : "");
+
+  if (sameAsUser) {
+    return {
+      deliverySameAsUser: true,
+      deliveryName: record.deliveryName || record.userName,
+      deliveryEmployeeNumber,
+      deliveryCompanyName: record.deliveryCompanyName || record.userCompanyName,
+      deliveryDepartment: record.deliveryDepartment || record.userDepartmentName,
+      deliveryArea: record.deliveryArea,
+      deliveryPostalCode: record.deliveryPostalCode,
+      deliveryAddress: record.deliveryAddress || record.userAddress,
+      deliveryBuilding: record.deliveryBuilding,
+      deliveryEmail: record.deliveryEmail || record.userEmail,
+      deliveryPhone: record.deliveryPhone || record.userPhone,
+    };
+  }
+
+  return {
+    deliverySameAsUser: false,
+    deliveryName: record.deliveryName,
+    deliveryEmployeeNumber,
+    deliveryCompanyName: record.deliveryCompanyName,
+    deliveryDepartment: record.deliveryDepartment,
+    deliveryArea: record.deliveryArea,
+    deliveryPostalCode: record.deliveryPostalCode,
+    deliveryAddress: record.deliveryAddress,
+    deliveryBuilding: record.deliveryBuilding,
+    deliveryEmail: record.deliveryEmail,
+    deliveryPhone: record.deliveryPhone,
+  };
 }
 
 function newClientLineId(): string {
@@ -121,8 +149,6 @@ export function equipmentRequestToPrefillPayload(
   const staffForForm = includesPc
     ? record.userStaffCategory.trim()
     : LENDING_NON_PC_STAFF_CATEGORY;
-
-  const sameAsUser = deliveryMatchesUser(record);
 
   return {
     applicant: {
@@ -150,36 +176,12 @@ export function equipmentRequestToPrefillPayload(
       userHrEmployeeCategory: "",
       userHrOccupationName: "",
     },
-    delivery: sameAsUser
-      ? {
-          deliverySameAsUser: true,
-          deliveryName: "",
-          deliveryEmployeeNumber: "",
-          deliveryCompanyName: "",
-          deliveryDepartment: "",
-          deliveryArea: "",
-          deliveryPostalCode: "",
-          deliveryAddress: "",
-          deliveryBuilding: "",
-          deliveryEmail: "",
-          deliveryPhone: "",
-        }
-      : {
-          deliverySameAsUser: false,
-          deliveryName: record.deliveryName,
-          deliveryEmployeeNumber: "",
-          deliveryCompanyName: record.deliveryCompanyName,
-          deliveryDepartment: record.deliveryDepartment,
-          deliveryArea: record.deliveryArea,
-          deliveryPostalCode: record.deliveryPostalCode,
-          deliveryAddress: record.deliveryAddress,
-          deliveryBuilding: record.deliveryBuilding,
-          deliveryEmail: record.deliveryEmail,
-          deliveryPhone: record.deliveryPhone,
-        },
+    delivery: deliveryFromRecord(record),
     lendingLines: sortedLines.map((l) => ({
       id: newClientLineId(),
       equipmentType: l.equipmentType,
+      assignedUserEmployeeNumber:
+        l.assignedUserEmployeeNumber.trim() || record.userEmployeeNumber,
     })),
     reason: {
       requestReason: record.requestReason,
@@ -188,8 +190,8 @@ export function equipmentRequestToPrefillPayload(
       decisionWorkContent: includesPc ? record.decisionWorkContent : "",
       decisionClientEnv: includesPc ? record.decisionClientEnv : "",
       msOfficeEdition: inferMsOfficeEditionForPrefill(lineRows, staffForForm, record.licenseSpecCode),
-      lendingStartDate: "",
-      expectedReturnDate: "",
+      lendingStartDate: formatDateOnlyUtc(record.lendingStartDate),
+      expectedReturnDate: formatDateOnlyUtc(record.expectedReturnDate),
       requestDetail: record.requestDetail,
       smartphoneCameraPresence: record.smartphoneCameraPresence,
       smartphoneUserIdentification: record.smartphoneUserIdentification,

@@ -29,6 +29,7 @@ import {
   CopyFromPastApplicantMasterFields,
   useCopyFromPastApplicantMaster,
 } from "@/components/it-service/copyFromPastApplicantMaster";
+import { buildArchivePrefill } from "@/lib/copyFromPastPrefillFetch";
 import type { LendingRequestPrefillPayload } from "@/lib/mapEquipmentRequestToPrefill";
 import type { EquipmentReturnPrefillPayload } from "@/lib/mapEquipmentReturnRequestToPrefill";
 import { addNamedRequestArchive, type NamedArchiveKind } from "@/lib/namedRequestArchives";
@@ -88,6 +89,7 @@ export default function CopyFromPastReturnRequestsDialog({
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveLabel, setArchiveLabel] = useState("");
   const [templateSavedNotice, setTemplateSavedNotice] = useState(false);
+  const [archiveSaving, setArchiveSaving] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -147,28 +149,12 @@ export default function CopyFromPastReturnRequestsDialog({
     setError(null);
     setDetailLoading(true);
     try {
-      const q = new URLSearchParams({ applicantEmployeeNumber: emp });
-      // 暫定: 一覧は貸与・返却を併記するが、取り込みは申請 ID で既存の GET を呼び分ける。
-      if (selected.kind === "lending") {
-        const res = await fetch(`/api/requests/${encodeURIComponent(selected.id)}?${q.toString()}`);
-        const data = (await res.json()) as { prefill?: LendingRequestPrefillPayload; error?: string };
-        if (!res.ok) {
-          throw new Error(data.error ?? "申請の取得に失敗しました。");
-        }
-        if (!data.prefill) {
-          throw new Error("プリフィルデータがありません。");
-        }
-        onLendingPrefill(data.prefill);
+      const kind: NamedArchiveKind = selected.kind === "return" ? "return" : "lending";
+      const prefill = await buildArchivePrefill(kind, selected.id, applicantName, emp);
+      if (kind === "lending") {
+        onLendingPrefill(prefill as LendingRequestPrefillPayload);
       } else {
-        const res = await fetch(`/api/equipment-returns/${encodeURIComponent(selected.id)}?${q.toString()}`);
-        const data = (await res.json()) as { prefill?: EquipmentReturnPrefillPayload; error?: string };
-        if (!res.ok) {
-          throw new Error(data.error ?? "申請の取得に失敗しました。");
-        }
-        if (!data.prefill) {
-          throw new Error("プリフィルデータがありません。");
-        }
-        onReturnPrefill(data.prefill);
+        onReturnPrefill(prefill as EquipmentReturnPrefillPayload);
       }
       onClose();
     } catch (e) {
@@ -178,7 +164,7 @@ export default function CopyFromPastReturnRequestsDialog({
     }
   };
 
-  const confirmSaveArchive = () => {
+  const confirmSaveArchive = async () => {
     const emp = applicantEmployeeNumber.trim();
     if (!selected || !emp) {
       setError("申請者の社員番号と、一覧で保存する行を選んでください。");
@@ -188,21 +174,29 @@ export default function CopyFromPastReturnRequestsDialog({
     const kind: NamedArchiveKind = selected.kind === "return" ? "return" : "lending";
     const kindLabel = kind === "return" ? "返却" : "貸与";
     const label = archiveLabel.trim() || `${kindLabel} ${selected.id.slice(0, 8)}`;
+    setError(null);
+    setArchiveSaving(true);
     try {
+      const prefill = await buildArchivePrefill(kind, selected.id, applicantName, emp);
       addNamedRequestArchive({
         label,
         kind,
         sourceRequestId: selected.id,
         applicantEmployeeNumber: emp,
-        applicantNameSnapshot: row?.applicantName,
+        applicantNameSnapshot: applicantName.trim() || row?.applicantName,
         userNameSnapshot: row?.userName,
+        prefill,
       });
       onArchivesUpdated?.();
       setArchiveOpen(false);
       setArchiveLabel("");
       setTemplateSavedNotice(true);
-    } catch {
-      setError("テンプレートの保存に失敗しました。ブラウザのストレージ設定を確認してください。");
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "テンプレートの保存に失敗しました。ブラウザのストレージ設定を確認してください。",
+      );
+    } finally {
+      setArchiveSaving(false);
     }
   };
 
@@ -351,10 +345,11 @@ export default function CopyFromPastReturnRequestsDialog({
                   <Button
                     type="button"
                     variant="contained"
-                    onClick={() => confirmSaveArchive()}
+                    disabled={archiveSaving}
+                    onClick={() => void confirmSaveArchive()}
                     sx={{ bgcolor: brandColor }}
                   >
-                    保存
+                    {archiveSaving ? <CircularProgress size={22} color="inherit" /> : "保存"}
                   </Button>
                 </Box>
               </Box>

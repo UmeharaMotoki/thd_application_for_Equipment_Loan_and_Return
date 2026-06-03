@@ -6,19 +6,30 @@ import {
   optionsRowsToLabelSet,
 } from "@/lib/applicationSelectOptionsQueries";
 import { getEmploymentTypeLabelSetForValidation } from "@/lib/employmentTypeOptions";
-import { LENDING_EQUIPMENT_TYPE_OPTIONS } from "@/lib/lendingEquipmentOptions";
-import { RETURN_REQUEST_REASON_OPTIONS } from "@/lib/equipmentReturnReasonOptions";
+import {
+  RETURN_OTHER_EQUIPMENT_CODE,
+  RETURN_SHIPPING_BOX_EQUIPMENT_CODES,
+} from "@/lib/returnEquipmentFormConstants";
 import { createEquipmentReturnRequestSchema } from "@/lib/validators";
 
 type ReturnBody = z.infer<typeof createEquipmentReturnRequestSchema>;
 
 const RETURN_FETCH_CATEGORIES = [
-  APPLICATION_SELECT_CATEGORIES.returnRequestReason,
-  APPLICATION_SELECT_CATEGORIES.lendingEquipmentType,
+  APPLICATION_SELECT_CATEGORIES.returnReason,
+  APPLICATION_SELECT_CATEGORIES.returnMainItem,
+  APPLICATION_SELECT_CATEGORIES.returnItemAccessory,
+  APPLICATION_SELECT_CATEGORIES.returnShippingBox,
 ] as const;
 
-function mergeSet(db: Set<string>, fallback: readonly string[]): Set<string> {
-  return db.size > 0 ? db : new Set(fallback);
+function optionsRowsToCodeSet(
+  rows: Awaited<ReturnType<typeof fetchActiveOptionsByCategories>>,
+  category: string,
+): Set<string> {
+  return new Set(
+    rows
+      .filter((r) => r.category === category && r.code)
+      .map((r) => (r.code as string).trim()),
+  );
 }
 
 export async function validateEquipmentReturnPostAgainstMasters(
@@ -30,27 +41,77 @@ export async function validateEquipmentReturnPostAgainstMasters(
     getEmploymentTypeLabelSetForValidation(prisma),
   ]);
 
-  const reasonSet = mergeSet(
-    optionsRowsToLabelSet(rows, APPLICATION_SELECT_CATEGORIES.returnRequestReason),
-    RETURN_REQUEST_REASON_OPTIONS,
+  const reasonSet = optionsRowsToLabelSet(rows, APPLICATION_SELECT_CATEGORIES.returnReason);
+  const mainCodeSet = optionsRowsToCodeSet(rows, APPLICATION_SELECT_CATEGORIES.returnMainItem);
+  const mainLabelByCode = new Map(
+    rows
+      .filter((r) => r.category === APPLICATION_SELECT_CATEGORIES.returnMainItem && r.code)
+      .map((r) => [r.code as string, r.label]),
   );
-  const equipmentSet = mergeSet(
-    optionsRowsToLabelSet(rows, APPLICATION_SELECT_CATEGORIES.lendingEquipmentType),
-    LENDING_EQUIPMENT_TYPE_OPTIONS,
+  const accessoryLabelsByCode = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (r.category !== APPLICATION_SELECT_CATEGORIES.returnItemAccessory || !r.code) continue;
+    const parent = r.code.trim();
+    if (!accessoryLabelsByCode.has(parent)) accessoryLabelsByCode.set(parent, new Set());
+    accessoryLabelsByCode.get(parent)!.add(r.label);
+  }
+  const shippingBoxSet = optionsRowsToLabelSet(
+    rows,
+    APPLICATION_SELECT_CATEGORIES.returnShippingBox,
   );
+
+  if (reasonSet.size === 0) {
+    return "返却理由のマスタが未設定です。application_select_option を投入してください。";
+  }
+  if (mainCodeSet.size === 0) {
+    return "返却物のマスタが未設定です。application_select_option を投入してください。";
+  }
 
   if (!employmentSet.has(body.userContractType.trim())) {
-    return "契約形態（雇用形態）の値が不正です。";
+    return "雇用形態の値が不正です。";
   }
   if (!reasonSet.has(body.requestReason.trim())) {
-    return "申請理由の値が不正です。";
+    return "返却理由の値がマスタと一致しません。";
   }
 
+  let hasOther = false;
   for (let i = 0; i < body.lines.length; i += 1) {
-    const name = body.lines[i].equipmentName.trim();
-    if (!equipmentSet.has(name)) {
-      return `機器 ${i + 1} 行目：名称の値がマスタと一致しません。`;
+    const row = body.lines[i];
+    const code = row.equipmentCode.trim();
+    const label = row.equipmentLabel.trim();
+
+    if (!mainCodeSet.has(code)) {
+      return `機器 ${i + 1} 行目：返却物の値がマスタと一致しません。`;
     }
+    if (mainLabelByCode.get(code) !== label) {
+      return `機器 ${i + 1} 行目：表示名がマスタと一致しません。`;
+    }
+
+    if (code === RETURN_OTHER_EQUIPMENT_CODE) {
+      hasOther = true;
+      continue;
+    }
+
+    if (!row.assetManagementNumber.trim()) {
+      return `機器 ${i + 1} 行目：資産管理番号を入力してください。`;
+    }
+
+    if (RETURN_SHIPPING_BOX_EQUIPMENT_CODES.has(code)) {
+      if (!shippingBoxSet.has(row.shippingBoxChoice.trim())) {
+        return `機器 ${i + 1} 行目：返却用梱包箱の値が不正です。`;
+      }
+    }
+
+    const allowedAcc = accessoryLabelsByCode.get(code);
+    for (const acc of row.accessories) {
+      if (!allowedAcc?.has(acc.trim())) {
+        return `機器 ${i + 1} 行目：付属品「${acc}」がマスタと一致しません。`;
+      }
+    }
+  }
+
+  if (hasOther && !body.otherItemsDetail.trim()) {
+    return "「その他」を選択した場合は、返却物の詳細を入力してください。";
   }
 
   return null;

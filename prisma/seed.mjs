@@ -136,6 +136,10 @@ function seedCategory(category, labels) {
   });
 }
 
+function seedOption(category, code, label, sortOrder) {
+  applicationSelectSeedRows.push({ category, code, label, sortOrder });
+}
+
 seedCategory("lending_request_reason", [
   "新規入社のため",
   "案件アサインのため",
@@ -149,6 +153,61 @@ seedCategory("return_request_reason", [
   "故障・破損による返却",
   "その他",
 ]);
+
+/** 機器返却フォーム（参考フォーム準拠） */
+seedCategory("return_reason", [
+  "退職（管理社員・技術社員）",
+  "退職（社外協力者）",
+  "異動",
+  "転籍",
+  "休職",
+  "その他",
+]);
+seedOption("return_main_item", "desktop_pc", "デスクトップPC", 10);
+seedOption("return_main_item", "laptop_pc", "ノートPC", 20);
+seedOption("return_main_item", "monitor", "モニタ", 30);
+seedOption("return_main_item", "smartphone", "スマホ", 40);
+seedOption("return_main_item", "feature_phone", "ガラホ", 50);
+seedOption("return_main_item", "wifi_router", "Wi-Fiルータ", 60);
+seedOption("return_main_item", "other", "その他", 70);
+
+const returnAccessories = [
+  ["desktop_pc", "デスクトップPC本体"],
+  ["desktop_pc", "電源コード"],
+  ["desktop_pc", "DVI変換コード"],
+  ["desktop_pc", "キーボード"],
+  ["desktop_pc", "マウス"],
+  ["laptop_pc", "ノートPC本体"],
+  ["laptop_pc", "電源コード・ACアダプタ"],
+  ["monitor", "モニタ本体"],
+  ["monitor", "電源コード"],
+  ["monitor", "モニタケーブル (DVI)"],
+  ["monitor", "モニタケーブル (VGA)"],
+  ["monitor", "モニタケーブル (HDMI)"],
+  ["monitor", "モニタケーブル (HDMI⇔VGA変換ケーブル)"],
+  ["smartphone", "スマホ本体"],
+  ["smartphone", "外箱"],
+  ["smartphone", "付属品 (SIMピン等)"],
+  ["smartphone", "Lightningケーブル"],
+  ["smartphone", "USB電源アダプタ"],
+  ["smartphone", "イヤホン"],
+  ["feature_phone", "ガラホ本体"],
+  ["feature_phone", "外箱・ケーブル類"],
+  ["wifi_router", "Wi-Fiルータ本体"],
+  ["wifi_router", "外箱・ケーブル類"],
+];
+returnAccessories.forEach(([code, label], i) => {
+  seedOption("return_item_accessory", code, label, (i + 1) * 10);
+});
+
+seedCategory("return_shipping_box", ["有", "無"]);
+
+seedOption("return_asset_number_label", "desktop_pc", "返却物-資産番号-デスクトップPC", 10);
+seedOption("return_asset_number_label", "laptop_pc", "返却物-資産番号-ノートPC", 20);
+seedOption("return_asset_number_label", "monitor", "返却物-資産番号-モニタ", 30);
+seedOption("return_asset_number_label", "smartphone", "返却物-資産番号-スマホ（電話番号ハイフンなし）", 40);
+seedOption("return_asset_number_label", "feature_phone", "返却物-資産番号-ガラホ（電話番号ハイフンなし）", 50);
+seedOption("return_asset_number_label", "wifi_router", "返却物-資産番号-Wi-Fiルータ（電話番号ハイフンなし）", 60);
 seedCategory("decision_contract_type", ["請負準委任", "派遣"]);
 seedCategory("decision_work_content", ["開発業務用", "社内業務用"]);
 seedCategory("decision_client_env", ["あり", "なし"]);

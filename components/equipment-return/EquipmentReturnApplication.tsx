@@ -14,27 +14,29 @@ import {
   Typography,
 } from "@mui/material";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
-import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import dayjs from "dayjs";
 import "dayjs/locale/ja";
 import ItServiceShell from "@/components/it-service/ItServiceShell";
 import { useRegisterReturnCopyPrefill } from "@/components/it-service/CopyFromPastProvider";
-import { brandDatePickerSlotProps } from "@/lib/brandDatePicker";
-import { compareIsoDateOnly, parseIsoDateOnly } from "@/lib/dateOnly";
-import { RETURN_EQUIPMENT_NAME_OPTIONS } from "@/lib/equipmentReturnOptions";
-import { RETURN_REQUEST_REASON_OPTIONS } from "@/lib/equipmentReturnReasonOptions";
 import { normalizeEmployeeSearchInput } from "@/lib/employeeSearchNormalize";
 import { EQUIPMENT_RETURN_WARNINGS } from "@/lib/equipmentReturnWarnings";
 import { RETURN_PREFILL_SESSION_KEY } from "@/lib/copyFromPastConstants";
 import type { EquipmentReturnPrefillPayload } from "@/lib/mapEquipmentReturnRequestToPrefill";
-import {
-  APPLICATION_SELECT_CATEGORIES,
-  RETURN_PAGE_FORM_OPTION_CATEGORIES,
-  type ApplicationSelectCategory,
-} from "@/lib/applicationSelectOptionCategories";
-import { useApplicationSelectOptions } from "@/lib/hooks/useApplicationSelectOptions";
+import { APPLICATION_SELECT_CATEGORIES } from "@/lib/applicationSelectOptionCategories";
+import { useReturnFormSelectOptions } from "@/lib/hooks/useReturnFormSelectOptions";
 import { useEmploymentTypeLabels } from "@/lib/hooks/useEmploymentTypeLabels";
+import {
+  emptyReturnEquipmentSelection,
+  migrateReturnEquipmentState,
+  type ReturnEquipmentSelectionState,
+} from "@/lib/returnEquipmentSelectionTypes";
+import {
+  isReturnEquipmentSelectionComplete,
+  validateReturnEquipmentSelection,
+} from "@/lib/returnEquipmentSelectionValidation";
+import { RETURN_OTHER_EQUIPMENT_CODE } from "@/lib/returnEquipmentFormConstants";
+import ReturnEquipmentSelectionSection from "@/components/equipment-return/ReturnEquipmentSelectionSection";
 
 type ApplicantFormData = {
   applicantName: string;
@@ -53,13 +55,6 @@ type UserFormData = {
   userContractType: string;
 };
 
-export type ReturnEquipmentLine = {
-  id: string;
-  equipmentName: string;
-  lendingDueDate: string;
-  expectedReturnDate: string;
-};
-
 type ReturnReasonFormData = {
   requestReason: string;
   requestDetail: string;
@@ -68,7 +63,7 @@ type ReturnReasonFormData = {
 type DraftPayload = {
   applicant: ApplicantFormData;
   user: UserFormData;
-  lines: ReturnEquipmentLine[];
+  returnEquipment?: ReturnEquipmentSelectionState;
   returnReason?: ReturnReasonFormData;
 };
 
@@ -118,23 +113,9 @@ const initialReturnReason: ReturnReasonFormData = {
   requestDetail: "",
 };
 
-function newLine(): ReturnEquipmentLine {
-  return {
-    id:
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `line-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    equipmentName: "",
-    lendingDueDate: "",
-    expectedReturnDate: "",
-  };
-}
-
 const textFieldRowSx = { ".MuiInputBase-root": { height: 46 } };
 const formRowLabelSx = { width: 170, flexShrink: 0, fontSize: 18 } as const;
 const formRowFieldCellSx = { flex: 1, minWidth: 0 } as const;
-
-dayjs.locale("ja");
 
 /** 空ボディや HTML エラーでも落ちないようレスポンスを解釈 */
 async function parseApiJson(response: Response): Promise<{ id?: string; error?: string }> {
@@ -167,6 +148,8 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 const brandColor = "#007D9E";
 
+dayjs.locale("ja");
+
 export default function EquipmentReturnApplication() {
   const [step, setStep] = useState<"notice" | "applicant" | "user" | "equipment" | "confirm">(
     "notice",
@@ -174,7 +157,9 @@ export default function EquipmentReturnApplication() {
   const [noticeAgreed, setNoticeAgreed] = useState(false);
   const [applicantData, setApplicantData] = useState<ApplicantFormData>(initialApplicant);
   const [userData, setUserData] = useState<UserFormData>(initialUser);
-  const [lines, setLines] = useState<ReturnEquipmentLine[]>(() => [newLine()]);
+  const [returnEquipment, setReturnEquipment] = useState<ReturnEquipmentSelectionState>(
+    emptyReturnEquipmentSelection,
+  );
   const [returnReasonData, setReturnReasonData] =
     useState<ReturnReasonFormData>(initialReturnReason);
   const [applicantCandidates, setApplicantCandidates] = useState<EmployeeOption[]>([]);
@@ -192,27 +177,33 @@ export default function EquipmentReturnApplication() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const { labelsByCategory, error: formOptionsError } = useApplicationSelectOptions(
-    RETURN_PAGE_FORM_OPTION_CATEGORIES,
-  );
+  const {
+    optionsByCategory,
+    accessoriesByParentCode,
+    assetNumberLabelByCode,
+    loading: returnOptionsLoading,
+    error: returnOptionsError,
+    ready: returnOptionsReady,
+  } = useReturnFormSelectOptions();
   const { labels: employmentTypeLabels, error: employmentTypesError } = useEmploymentTypeLabels();
 
-  const pickOptions = useCallback(
-    (cat: ApplicationSelectCategory, fallback: readonly string[]): string[] => {
-      const list = labelsByCategory[cat];
-      return list && list.length > 0 ? list : [...fallback];
-    },
-    [labelsByCategory],
+  const mainReturnItems = useMemo(
+    () => optionsByCategory[APPLICATION_SELECT_CATEGORIES.returnMainItem] ?? [],
+    [optionsByCategory],
   );
-
-  const returnEquipmentNameOptions = useMemo(
-    () => pickOptions(APPLICATION_SELECT_CATEGORIES.lendingEquipmentType, RETURN_EQUIPMENT_NAME_OPTIONS),
-    [pickOptions],
+  const returnReasonOptionsList = useMemo(
+    () => optionsByCategory[APPLICATION_SELECT_CATEGORIES.returnReason] ?? [],
+    [optionsByCategory],
   );
-  const returnRequestReasonOptionsList = useMemo(
-    () => pickOptions(APPLICATION_SELECT_CATEGORIES.returnRequestReason, RETURN_REQUEST_REASON_OPTIONS),
-    [pickOptions],
+  const shippingBoxOptions = useMemo(
+    () => optionsByCategory[APPLICATION_SELECT_CATEGORIES.returnShippingBox] ?? [],
+    [optionsByCategory],
   );
+  const shippingBoxLabelSet = useMemo(
+    () => new Set(shippingBoxOptions.map((o) => o.label)),
+    [shippingBoxOptions],
+  );
+  const formOptionsError = returnOptionsError;
 
   useEffect(() => {
     const saved = localStorage.getItem(DRAFT_KEY);
@@ -221,14 +212,8 @@ export default function EquipmentReturnApplication() {
       const parsed = JSON.parse(saved) as DraftPayload;
       if (parsed.applicant) setApplicantData({ ...initialApplicant, ...parsed.applicant });
       if (parsed.user) setUserData({ ...initialUser, ...parsed.user });
-      if (Array.isArray(parsed.lines) && parsed.lines.length > 0) {
-        setLines(
-          parsed.lines.map((l) => ({
-            ...newLine(),
-            ...l,
-            id: l.id || newLine().id,
-          })),
-        );
+      if (parsed.returnEquipment) {
+        setReturnEquipment(migrateReturnEquipmentState(parsed.returnEquipment));
       }
       if (parsed.returnReason) {
         setReturnReasonData({
@@ -245,24 +230,17 @@ export default function EquipmentReturnApplication() {
     const payload: DraftPayload = {
       applicant: applicantData,
       user: userData,
-      lines,
+      returnEquipment,
       returnReason: returnReasonData,
     };
     localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
-  }, [applicantData, userData, lines, returnReasonData]);
+  }, [applicantData, userData, returnEquipment, returnReasonData]);
 
   const equipmentStepOk = useMemo(() => {
     if (!returnReasonData.requestReason.trim()) return false;
-    for (const line of lines) {
-      if (!line.equipmentName.trim()) return false;
-      const due = line.lendingDueDate.trim();
-      const ret = line.expectedReturnDate.trim();
-      if (!due || !ret) return false;
-      if (!parseIsoDateOnly(due) || !parseIsoDateOnly(ret)) return false;
-      if (compareIsoDateOnly(ret, due) > 0) return false;
-    }
-    return true;
-  }, [lines, returnReasonData.requestReason]);
+    if (!returnOptionsReady) return false;
+    return isReturnEquipmentSelectionComplete(returnEquipment, shippingBoxLabelSet);
+  }, [returnReasonData.requestReason, returnOptionsReady, returnEquipment, shippingBoxLabelSet]);
 
   const showApplicantEmployeeField =
     revealApplicantEmployeeField && applicantData.applicantName.trim().length > 0;
@@ -479,25 +457,46 @@ export default function EquipmentReturnApplication() {
     setStep("equipment");
   };
 
-  const buildReturnRequestBody = () => ({
-    ...applicantData,
-    ...userData,
-    requestReason: returnReasonData.requestReason,
-    requestDetail: returnReasonData.requestDetail,
-    lines: lines.map(({ equipmentName, lendingDueDate, expectedReturnDate }) => ({
-      equipmentName,
-      lendingDueDate,
-      expectedReturnDate,
-    })),
-  });
+  const buildReturnRequestBody = () => {
+    const activeLines = returnEquipment.lines.filter((l) => l.equipmentCode.trim());
+    const otherLine = activeLines.find((l) => l.equipmentCode === RETURN_OTHER_EQUIPMENT_CODE);
+    return {
+      ...applicantData,
+      ...userData,
+      requestReason: returnReasonData.requestReason,
+      requestDetail: returnReasonData.requestDetail,
+      otherItemsDetail: otherLine?.otherDetail ?? "",
+      lines: activeLines.map((line) => ({
+        equipmentCode: line.equipmentCode,
+        equipmentLabel: line.equipmentLabel,
+        assetManagementNumber: line.assetManagementNumber,
+        shippingBoxChoice: line.shippingBoxChoice,
+        accessories: line.selectedAccessories,
+        otherDetail:
+          line.equipmentCode === RETURN_OTHER_EQUIPMENT_CODE ? line.otherDetail : "",
+        lendingDueDate: line.lendingDueDate,
+        expectedReturnDate: line.expectedReturnDate,
+      })),
+    };
+  };
 
   const handleEquipmentContinue = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);
-    if (!equipmentStepOk) {
+    if (!returnOptionsReady) {
       setMessage({
         type: "error",
-        text: "申請理由・各機器の名称・貸与期限・返却予定日を入力し、返却予定日は貸与期限以前にしてください。",
+        text: "返却フォームの選択肢を読み込めていません。マスタ投入後に再読み込みしてください。",
+      });
+      return;
+    }
+    const equipmentErr = validateReturnEquipmentSelection(returnEquipment, shippingBoxLabelSet);
+    if (equipmentErr || !returnReasonData.requestReason.trim()) {
+      setMessage({
+        type: "error",
+        text:
+          equipmentErr ??
+          "返却理由を選択してください。返却物・日付・資産管理番号などもご確認ください。",
       });
       return;
     }
@@ -527,7 +526,7 @@ export default function EquipmentReturnApplication() {
       setMessage({ type: "success", text: "機器返却申請を登録しました。" });
       setApplicantData(initialApplicant);
       setUserData(initialUser);
-      setLines([newLine()]);
+      setReturnEquipment(emptyReturnEquipmentSelection());
       setReturnReasonData(initialReturnReason);
       setApplicantCandidates([]);
       setSelectedApplicantEmployeeId(null);
@@ -553,7 +552,7 @@ export default function EquipmentReturnApplication() {
   const applyReturnPrefillFromPast = useCallback((prefill: EquipmentReturnPrefillPayload) => {
     setApplicantData(prefill.applicant);
     setUserData(prefill.user);
-    setLines(prefill.lines.length > 0 ? prefill.lines : [newLine()]);
+    setReturnEquipment(prefill.returnEquipment ?? emptyReturnEquipmentSelection());
     setReturnReasonData(prefill.returnReason);
     setRevealApplicantEmployeeField(true);
     setRevealApplicantDetailFields(true);
@@ -567,7 +566,7 @@ export default function EquipmentReturnApplication() {
     setStep("applicant");
     setMessage({
       type: "success",
-      text: "過去の申請を再利用しました。各機器の日付を入力し直し、内容を確認してから登録してください。",
+      text: "過去の申請を再利用しました。内容を確認のうえ、必要に応じて修正してから登録してください。",
     });
   }, []);
 
@@ -584,29 +583,6 @@ export default function EquipmentReturnApplication() {
       /* ignore */
     }
   }, [applyReturnPrefillFromPast]);
-
-  const updateLine = (id: string, patch: Partial<ReturnEquipmentLine>) => {
-    setLines((prev) =>
-      prev.map((row) => {
-        if (row.id !== id) return row;
-        const next = { ...row, ...patch };
-        const due = next.lendingDueDate.trim();
-        const ret = next.expectedReturnDate.trim();
-        if (due && ret && parseIsoDateOnly(due) && parseIsoDateOnly(ret)) {
-          if (compareIsoDateOnly(ret, due) > 0) {
-            return { ...next, expectedReturnDate: "" };
-          }
-        }
-        return next;
-      }),
-    );
-  };
-
-  const removeLine = (id: string) => {
-    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
-  };
-
-  const addLine = () => setLines((prev) => [...prev, newLine()]);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ja">
@@ -626,7 +602,7 @@ export default function EquipmentReturnApplication() {
               {EQUIPMENT_RETURN_WARNINGS.map((warning) => (
                 <Box
                   key={warning}
-                  sx={{ display: "flex", alignItems: "flex-start", gap: 0 }}
+                  sx={{ display: "flex", alignItems: "flex-start", gap: 1.25 }}
                 >
                   <Box
                     component="span"
@@ -640,7 +616,6 @@ export default function EquipmentReturnApplication() {
                     }}
                   />
                   <Typography sx={{ fontSize: 18, color: "#333", flex: 1, lineHeight: 1.65 }}>
-                    {"\u3000"}
                     {warning}
                   </Typography>
                 </Box>
@@ -957,7 +932,7 @@ export default function EquipmentReturnApplication() {
                   ))}
                 {showUserDetailFields && (
                   <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <Typography sx={formRowLabelSx}>契約形態</Typography>
+                    <Typography sx={formRowLabelSx}>雇用形態</Typography>
                     <Box sx={formRowFieldCellSx}>
                       <TextField
                         select
@@ -1019,115 +994,27 @@ export default function EquipmentReturnApplication() {
         ) : step === "equipment" ? (
           <>
             <Typography sx={{ fontSize: 24, mb: 1, padding: "20px 0 12px 0" }}>
-              Q. 返却する機器を入力してください（複数台ある場合は「機器を追加」で行を増やせます）
+              Q. 返却する機器を入力してください（機器種別ごとに1行。複数種別がある場合は「機器を追加」）
             </Typography>
             <Box component="form" onSubmit={handleEquipmentContinue} sx={{ width: "95%", margin: "0 auto" }}>
               <Stack spacing={2.5}>
-                {lines.map((line, index) => (
-                  <Box
-                    key={line.id}
-                    sx={{
-                      border: "1px solid #e8e8e8",
-                      borderRadius: 1,
-                      p: 2,
-                      bgcolor: "#fafafa",
-                    }}
-                  >
-                    <Typography sx={{ fontSize: 16, fontWeight: 600, mb: 1.5 }}>
-                      機器 {index + 1}
-                    </Typography>
-                    <Stack spacing={2}>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                        <Typography sx={{ ...formRowLabelSx, width: 140 }}>機器名称</Typography>
-                        <Box sx={{ ...formRowFieldCellSx, minWidth: 220 }}>
-                          <TextField
-                            select
-                            required
-                            label="選択"
-                            value={line.equipmentName}
-                            onChange={(e) => updateLine(line.id, { equipmentName: e.target.value })}
-                            fullWidth
-                            size="small"
-                            sx={textFieldRowSx}
-                          >
-                            <MenuItem value="" disabled>
-                              選択してください
-                            </MenuItem>
-                            {returnEquipmentNameOptions.map((opt) => (
-                              <MenuItem key={opt} value={opt}>
-                                {opt}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Box>
-                      </Box>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                        <Typography sx={{ ...formRowLabelSx, width: 140 }}>貸与期限</Typography>
-                        <Box sx={{ ...formRowFieldCellSx, minWidth: 200, maxWidth: 360 }}>
-                          <DatePicker
-                            format="YYYY-MM-DD"
-                            value={line.lendingDueDate ? dayjs(line.lendingDueDate) : null}
-                            onChange={(v) =>
-                              updateLine(line.id, {
-                                lendingDueDate:
-                                  v != null && v.isValid() ? v.format("YYYY-MM-DD") : "",
-                              })
-                            }
-                            views={["year", "month", "day"]}
-                            slotProps={brandDatePickerSlotProps}
-                            sx={{ width: "100%", maxWidth: "100%" }}
-                          />
-                        </Box>
-                      </Box>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                        <Typography sx={{ ...formRowLabelSx, width: 140 }}>返却予定日</Typography>
-                        <Box sx={{ ...formRowFieldCellSx, minWidth: 200, maxWidth: 360 }}>
-                          <DatePicker
-                            format="YYYY-MM-DD"
-                            value={line.expectedReturnDate ? dayjs(line.expectedReturnDate) : null}
-                            onChange={(v) =>
-                              updateLine(line.id, {
-                                expectedReturnDate:
-                                  v != null && v.isValid() ? v.format("YYYY-MM-DD") : "",
-                              })
-                            }
-                            maxDate={
-                              line.lendingDueDate ? dayjs(line.lendingDueDate) : undefined
-                            }
-                            views={["year", "month", "day"]}
-                            slotProps={brandDatePickerSlotProps}
-                            sx={{ width: "100%", maxWidth: "100%" }}
-                          />
-                        </Box>
-                      </Box>
-                      {lines.length > 1 && (
-                        <Box>
-                          <Button type="button" size="small" color="inherit" onClick={() => removeLine(line.id)}>
-                            この機器行を削除
-                          </Button>
-                        </Box>
-                      )}
-                    </Stack>
+                {returnOptionsLoading && (
+                  <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+                    <CircularProgress size={32} />
                   </Box>
-                ))}
-                <Box>
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    onClick={addLine}
-                    sx={{
-                      borderRadius: 999,
-                      height: 46,
-                      fontSize: 18,
-                      borderColor: "#c9c9c9",
-                      color: "#333",
-                    }}
-                  >
-                    機器を追加
-                  </Button>
-                </Box>
+                )}
+                {returnOptionsReady && (
+                  <ReturnEquipmentSelectionSection
+                    mainItems={mainReturnItems}
+                    accessoriesByParentCode={accessoriesByParentCode}
+                    shippingBoxOptions={shippingBoxOptions}
+                    assetNumberLabelByCode={assetNumberLabelByCode}
+                    value={returnEquipment}
+                    onChange={setReturnEquipment}
+                  />
+                )}
                 <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  <Typography sx={formRowLabelSx}>申請理由</Typography>
+                  <Typography sx={formRowLabelSx}>返却理由</Typography>
                   <Box sx={formRowFieldCellSx}>
                     <TextField
                       select
@@ -1138,14 +1025,15 @@ export default function EquipmentReturnApplication() {
                       required
                       fullWidth
                       size="small"
+                      disabled={!returnOptionsReady}
                       sx={textFieldRowSx}
                     >
                       <MenuItem value="" disabled>
                         選択してください
                       </MenuItem>
-                      {returnRequestReasonOptionsList.map((opt) => (
-                        <MenuItem key={opt} value={opt}>
-                          {opt}
+                      {returnReasonOptionsList.map((opt) => (
+                        <MenuItem key={opt.label} value={opt.label}>
+                          {opt.label}
                         </MenuItem>
                       ))}
                     </TextField>
@@ -1234,22 +1122,46 @@ export default function EquipmentReturnApplication() {
                 <SummaryRow label="所属企業名" value={userData.userCompanyName} />
                 <SummaryRow label="部署名" value={userData.userDepartmentName} />
                 <SummaryRow label="住所" value={userData.userAddress} />
-                <SummaryRow label="契約形態" value={userData.userContractType} />
+                <SummaryRow label="雇用形態" value={userData.userContractType} />
                 <Typography sx={{ fontWeight: 700, fontSize: 18, pt: 2 }}>申請内容</Typography>
-                <SummaryRow label="申請理由" value={returnReasonData.requestReason} />
+                <SummaryRow label="返却理由" value={returnReasonData.requestReason} />
                 <SummaryRow label="詳細" value={returnReasonData.requestDetail} />
                 <Typography sx={{ fontWeight: 700, fontSize: 18, pt: 2 }}>返却機器</Typography>
-                {lines.map((line, index) => (
-                  <Box
-                    key={line.id}
-                    sx={{ border: "1px solid #e0e0e0", borderRadius: 1, p: 1.5, bgcolor: "#fafafa" }}
-                  >
-                    <Typography sx={{ fontWeight: 600, mb: 1 }}>機器 {index + 1}</Typography>
-                    <SummaryRow label="機器名称" value={line.equipmentName} />
-                    <SummaryRow label="貸与期限" value={line.lendingDueDate} />
-                    <SummaryRow label="返却予定日" value={line.expectedReturnDate} />
-                  </Box>
-                ))}
+                {returnEquipment.lines
+                  .filter((line) => line.equipmentCode.trim())
+                  .map((line, index) => (
+                    <Box
+                      key={line.id}
+                      sx={{
+                        border: "1px solid #e0e0e0",
+                        borderRadius: 1,
+                        p: 1.5,
+                        bgcolor: "#fafafa",
+                      }}
+                    >
+                      <Typography sx={{ fontWeight: 600, mb: 1 }}>
+                        機器 {index + 1}：{line.equipmentLabel}
+                      </Typography>
+                      <SummaryRow label="貸与期限" value={line.lendingDueDate} />
+                      <SummaryRow label="返却予定日" value={line.expectedReturnDate} />
+                      {line.equipmentCode === RETURN_OTHER_EQUIPMENT_CODE ? (
+                        <SummaryRow label="詳細" value={line.otherDetail} />
+                      ) : (
+                        <>
+                          <SummaryRow label="資産管理番号" value={line.assetManagementNumber} />
+                          {line.selectedAccessories.length > 0 && (
+                            <SummaryRow
+                              label="付属品"
+                              value={line.selectedAccessories.join("、")}
+                            />
+                          )}
+                          {line.shippingBoxChoice && (
+                            <SummaryRow label="返却用梱包箱" value={line.shippingBoxChoice} />
+                          )}
+                        </>
+                      )}
+                    </Box>
+                  ))}
                 {message && <Alert severity={message.type}>{message.text}</Alert>}
                 <Box sx={{ display: "flex", justifyContent: "center", gap: 2, pt: 2, pb: 2 }}>
                   <Button

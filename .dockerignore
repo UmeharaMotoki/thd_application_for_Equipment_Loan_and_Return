@@ -9,7 +9,22 @@ npm-debug.log*
 Dockerfile*
 docker-compose*.yml
 aws
+awscliv2.zip
 *.log
 coverage
 dist
 .DS_Store
+# SSH keys / login info
+Motoki1723
+Motoki1723.pub
+# Docs
+*.md
+CLAUDE.md
+AGENTS.md
+README.md
+# Business docs (add folder names if they exist)
+データ/
+要件定義/
+設計書/
+仕様書/
+議事録/

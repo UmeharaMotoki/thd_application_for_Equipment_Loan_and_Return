@@ -4,6 +4,12 @@ import {
   type EquipmentCategory,
   type LendingEquipmentTypeOption,
 } from "@/lib/lendingEquipmentOptions";
+import {
+  isPcEquipmentType,
+  lineAssigneeEmployeeNumber,
+  type LendingUserPoolEntry,
+} from "@/lib/lendingUserPool";
+import type { ResolvedUserLicense } from "@/lib/lendingResolveUserLicenses";
 import { createLendingRequestSchema } from "@/lib/validators";
 
 export type CreateLendingBody = z.infer<typeof createLendingRequestSchema>;
@@ -99,6 +105,8 @@ export type SalesforcePerLinePayload = {
     userStaffCategory: string;
   };
   delivery: {
+    deliverySameAsUser: boolean;
+    deliveryEmployeeNumber: string;
     deliveryName: string;
     deliveryCompanyName: string;
     deliveryDepartment: string;
@@ -144,47 +152,44 @@ export type SalesforcePerLinePayload = {
 export function buildSalesforcePerLinePayloads(params: {
   applicationCorrelationId: string;
   equipmentRequestId: string;
-  lines: Array<{ id: string; equipmentType: string; sortOrder: number }>;
+  lines: Array<{
+    id: string;
+    equipmentType: string;
+    sortOrder: number;
+    assignedUserEmployeeNumber?: string;
+  }>;
   body: CreateLendingBody;
-  includesPc: boolean;
-  userStaffCategoryOut: string;
-  decisionContractTypeOut: string;
-  decisionWorkContentOut: string;
-  decisionClientEnvOut: string;
-  licenseTechnoProApply: string;
-  licenseUserSoftwareInstall: string;
-  licenseTechnoProNetwork: string;
-  licenseSpecCode: string;
+  userPool: LendingUserPoolEntry[];
+  licenseByEmployee: Map<string, ResolvedUserLicense>;
+  representativeEmployeeNumber: string;
 }): SalesforcePerLinePayload[] {
   const {
     applicationCorrelationId,
     equipmentRequestId,
     lines,
     body,
-    includesPc,
-    userStaffCategoryOut,
-    decisionContractTypeOut,
-    decisionWorkContentOut,
-    decisionClientEnvOut,
-    licenseTechnoProApply,
-    licenseUserSoftwareInstall,
-    licenseTechnoProNetwork,
-    licenseSpecCode,
+    userPool,
+    licenseByEmployee,
+    representativeEmployeeNumber,
   } = params;
 
-  const pcContextForRequest =
-    includesPc && userStaffCategoryOut.trim() !== ""
-      ? {
-          decisionContractType: decisionContractTypeOut,
-          decisionWorkContent: decisionWorkContentOut,
-          decisionClientEnv: decisionClientEnvOut,
-          msOfficeEdition: (body.msOfficeEdition ?? "").trim(),
-          licenseTechnoProApply,
-          licenseUserSoftwareInstall,
-          licenseTechnoProNetwork,
-          licenseSpecCode,
-        }
-      : null;
+  const poolByEmp = new Map(userPool.map((p) => [p.userEmployeeNumber, p]));
+
+  const pcContextForLine = (equipmentType: string, assigneeEmp: string) => {
+    if (!isPcEquipmentType(equipmentType)) return null;
+    const lic = licenseByEmployee.get(assigneeEmp);
+    if (!lic) return null;
+    return {
+      decisionContractType: lic.decisionContractType,
+      decisionWorkContent: lic.decisionWorkContent,
+      decisionClientEnv: lic.decisionClientEnv,
+      msOfficeEdition: lic.msOfficeEdition,
+      licenseTechnoProApply: lic.licenseTechnoProApply,
+      licenseUserSoftwareInstall: lic.licenseUserSoftwareInstall,
+      licenseTechnoProNetwork: lic.licenseTechnoProNetwork,
+      licenseSpecCode: lic.licenseSpecCode,
+    };
+  };
 
   const communicationContextForRequest = {
     smartphoneCameraPresence: (body.smartphoneCameraPresence ?? "").trim(),
@@ -204,6 +209,11 @@ export function buildSalesforcePerLinePayloads(params: {
   return sorted.map((line) => {
     const category = categoryForEquipmentType(line.equipmentType);
     const flags = flagsForCategory(category);
+    const assigneeEmp = lineAssigneeEmployeeNumber(line, representativeEmployeeNumber);
+    const poolUser = poolByEmp.get(assigneeEmp) ?? userPool[0];
+    const linePcContext = flags.includePcPayloadSlice
+      ? pcContextForLine(line.equipmentType, assigneeEmp)
+      : null;
 
     return {
       schemaVersion: 1,
@@ -224,19 +234,23 @@ export function buildSalesforcePerLinePayloads(params: {
         applicantPhone: (body.applicantPhone ?? "").trim(),
       },
       user: {
-        userName: body.userName.trim(),
-        userEmployeeNumber: body.userEmployeeNumber.trim(),
-        userCompanyName: body.userCompanyName.trim(),
-        userDepartmentName: body.userDepartmentName.trim(),
-        userAddress: body.userAddress.trim(),
-        userContractType: body.userContractType.trim(),
-        userCostDeptName: (body.userCostDeptName ?? "").trim(),
-        userCostDeptCode: (body.userCostDeptCode ?? "").trim(),
-        userEmail: (body.userEmail ?? "").trim(),
-        userPhone: (body.userPhone ?? "").trim(),
-        userStaffCategory: userStaffCategoryOut,
+        userName: poolUser.userName,
+        userEmployeeNumber: poolUser.userEmployeeNumber,
+        userCompanyName: poolUser.userCompanyName,
+        userDepartmentName: poolUser.userDepartmentName,
+        userAddress: poolUser.userAddress,
+        userContractType: poolUser.userContractType,
+        userCostDeptName: poolUser.userCostDeptName,
+        userCostDeptCode: poolUser.userCostDeptCode,
+        userEmail: poolUser.userEmail,
+        userPhone: poolUser.userPhone,
+        userStaffCategory:
+          licenseByEmployee.get(assigneeEmp)?.userStaffCategory ??
+          (body.userStaffCategory ?? "").trim(),
       },
       delivery: {
+        deliverySameAsUser: body.deliverySameAsUser ?? false,
+        deliveryEmployeeNumber: (body.deliveryEmployeeNumber ?? "").trim(),
         deliveryName: (body.deliveryName ?? "").trim(),
         deliveryCompanyName: (body.deliveryCompanyName ?? "").trim(),
         deliveryDepartment: (body.deliveryDepartment ?? "").trim(),
@@ -253,7 +267,7 @@ export function buildSalesforcePerLinePayloads(params: {
         requestReason: body.requestReason.trim(),
         requestDetail: (body.requestDetail ?? "").trim(),
       },
-      pcContext: flags.includePcPayloadSlice ? pcContextForRequest : null,
+      pcContext: linePcContext,
       communicationContext: flags.includeCommunicationPayloadSlice
         ? communicationContextForRequest
         : null,

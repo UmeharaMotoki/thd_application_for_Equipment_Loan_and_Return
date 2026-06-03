@@ -5,6 +5,41 @@ const optionalString = z.string().trim().optional().default("");
 
 export const lendingLineSchema = z.object({
   equipmentType: requiredString,
+  assignedUserEmployeeNumber: optionalString,
+});
+
+export const additionalUserSchema = z.object({
+  userName: requiredString,
+  userEmployeeNumber: requiredString,
+  userCompanyName: optionalString,
+  userDepartmentName: optionalString,
+  userAddress: optionalString,
+  userContractType: optionalString,
+  userStaffCategory: optionalString,
+  userCostDeptName: optionalString,
+  userCostDeptCode: optionalString,
+  userEmail: optionalString,
+  userPhone: optionalString,
+  userHrEmployeeCategory: optionalString,
+  userHrOccupationName: optionalString,
+});
+
+export const userLicenseSchema = z.object({
+  userEmployeeNumber: requiredString,
+  userStaffCategory: optionalString,
+  decisionContractType: optionalString,
+  decisionWorkContent: optionalString,
+  decisionClientEnv: optionalString,
+  msOfficeEdition: optionalString,
+  lendingStartDate: requiredString,
+  expectedReturnDate: requiredString,
+  smartphoneCameraPresence: optionalString,
+  smartphoneUserIdentification: optionalString,
+  smartphoneWorkplaceUse: optionalString,
+  peripheralMonitorSize: optionalString,
+  peripheralMonitorSizeCustom: optionalString,
+  peripheralLanCableLength: optionalString,
+  peripheralLanCableLengthCustom: optionalString,
 });
 
 export const createLendingRequestSchema = z.object({
@@ -26,6 +61,8 @@ export const createLendingRequestSchema = z.object({
   userCostDeptCode: optionalString,
   userEmail: optionalString,
   userPhone: optionalString,
+  deliverySameAsUser: z.boolean().optional().default(false),
+  deliveryEmployeeNumber: optionalString,
   deliveryName: optionalString,
   deliveryCompanyName: optionalString,
   deliveryDepartment: optionalString,
@@ -53,11 +90,19 @@ export const createLendingRequestSchema = z.object({
   requestDetail: optionalString,
   /** 申請単位の連携ID（UUID）。省略時はサーバーが採番 */
   applicationCorrelationId: z.string().uuid().optional(),
+  userMode: z.enum(["single", "multiple"]).optional().default("single"),
+  additionalUsers: z.array(additionalUserSchema).optional().default([]),
+  userLicenses: z.array(userLicenseSchema).optional().default([]),
   lines: z.array(lendingLineSchema).min(1),
 });
 
 export const returnLineSchema = z.object({
-  equipmentName: requiredString,
+  equipmentCode: requiredString,
+  equipmentLabel: requiredString,
+  assetManagementNumber: z.string().trim(),
+  shippingBoxChoice: optionalString,
+  accessories: z.array(z.string().trim().min(1)).default([]),
+  otherDetail: optionalString,
   lendingDueDate: requiredString,
   expectedReturnDate: requiredString,
 });
@@ -76,6 +121,7 @@ export const createEquipmentReturnRequestSchema = z.object({
   userContractType: requiredString,
   requestReason: requiredString,
   requestDetail: optionalString,
+  otherItemsDetail: optionalString,
   lines: z.array(returnLineSchema).min(1),
 });
 

@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { compareIsoDateOnly, parseIsoDateOnly } from "@/lib/dateOnly";
+import {
+  RETURN_OTHER_EQUIPMENT_CODE,
+  RETURN_PHONE_ASSET_EQUIPMENT_CODES,
+  RETURN_SHIPPING_BOX_EQUIPMENT_CODES,
+} from "@/lib/returnEquipmentFormConstants";
 import { shouldFallbackToJsonSave } from "@/lib/dbSubmissionFallback";
 import {
   hasLocalSubmissionDatabase,
@@ -158,8 +163,17 @@ export async function POST(req: Request) {
     }
 
     const requestDetail = body.requestDetail.trim();
+    const otherFromLine = body.lines.find((l) => l.equipmentCode.trim() === RETURN_OTHER_EQUIPMENT_CODE);
+    const otherItemsDetail =
+      body.otherItemsDetail.trim() || (otherFromLine?.otherDetail ?? "").trim();
 
     const normalizedLines: Array<{
+      equipmentCode: string;
+      equipmentLabel: string;
+      assetManagementNumber: string;
+      shippingBoxChoice: string;
+      accessoriesJson: string;
+      otherDetail: string;
       equipmentName: string;
       lendingDue: Date;
       expectedReturn: Date;
@@ -167,10 +181,12 @@ export async function POST(req: Request) {
 
     for (let i = 0; i < body.lines.length; i += 1) {
       const row = body.lines[i];
-      const name = row.equipmentName.trim();
-      if (!name) {
-        return json({ error: `機器 ${i + 1} 行目：名称を選択してください。` }, { status: 400 });
+      const code = row.equipmentCode.trim();
+      const label = row.equipmentLabel.trim();
+      if (!code || !label) {
+        return json({ error: `機器 ${i + 1} 行目：返却物を選択してください。` }, { status: 400 });
       }
+
       const dueS = row.lendingDueDate.trim();
       const retS = row.expectedReturnDate.trim();
       const lendingDue = parseIsoDateOnly(dueS);
@@ -187,11 +203,49 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
+
+      if (code !== RETURN_OTHER_EQUIPMENT_CODE) {
+        const asset = row.assetManagementNumber.trim();
+        if (!asset) {
+          return json({ error: `機器 ${i + 1} 行目：資産管理番号を入力してください。` }, { status: 400 });
+        }
+        if (RETURN_PHONE_ASSET_EQUIPMENT_CODES.has(code) && !/^[0-9]+$/.test(asset)) {
+          return json(
+            {
+              error: `機器 ${i + 1} 行目：資産管理番号はハイフンなしの数字のみで入力してください。`,
+            },
+            { status: 400 },
+          );
+        }
+        if (RETURN_SHIPPING_BOX_EQUIPMENT_CODES.has(code) && !row.shippingBoxChoice.trim()) {
+          return json(
+            { error: `機器 ${i + 1} 行目：返却用梱包箱（有/無）を選択してください。` },
+            { status: 400 },
+          );
+        }
+      }
+
       normalizedLines.push({
-        equipmentName: name,
+        equipmentCode: code,
+        equipmentLabel: label,
+        assetManagementNumber: row.assetManagementNumber.trim(),
+        shippingBoxChoice: row.shippingBoxChoice.trim(),
+        accessoriesJson: JSON.stringify(row.accessories.map((a) => a.trim()).filter(Boolean)),
+        otherDetail:
+          code === RETURN_OTHER_EQUIPMENT_CODE
+            ? (row.otherDetail ?? otherItemsDetail).trim()
+            : "",
+        equipmentName: label,
         lendingDue,
         expectedReturn,
       });
+    }
+
+    if (
+      normalizedLines.some((l) => l.equipmentCode === RETURN_OTHER_EQUIPMENT_CODE) &&
+      !otherItemsDetail
+    ) {
+      return json({ error: "「その他」を選択した場合は、返却物の詳細を入力してください。" }, { status: 400 });
     }
 
     const returnCreateData = {
@@ -208,8 +262,15 @@ export async function POST(req: Request) {
       userContractType: body.userContractType.trim(),
       requestReason: body.requestReason.trim(),
       requestDetail,
+      otherItemsDetail,
       lines: {
         create: normalizedLines.map((l, sortOrder) => ({
+          equipmentCode: l.equipmentCode,
+          equipmentLabel: l.equipmentLabel,
+          assetManagementNumber: l.assetManagementNumber,
+          shippingBoxChoice: l.shippingBoxChoice,
+          accessoriesJson: l.accessoriesJson,
+          otherDetail: l.otherDetail,
           equipmentName: l.equipmentName,
           lendingDueDate: l.lendingDue,
           expectedReturnDate: l.expectedReturn,
@@ -234,6 +295,12 @@ export async function POST(req: Request) {
               : "DB 保存に失敗したため `docker/JSON/議事送信` へフォールバック保存。",
           clientRequest: body,
           lines: normalizedLines.map((l) => ({
+            equipmentCode: l.equipmentCode,
+            equipmentLabel: l.equipmentLabel,
+            assetManagementNumber: l.assetManagementNumber,
+            shippingBoxChoice: l.shippingBoxChoice,
+            accessories: JSON.parse(l.accessoriesJson) as string[],
+            otherDetail: l.otherDetail,
             equipmentName: l.equipmentName,
             lendingDueDate: l.lendingDue.toISOString().slice(0, 10),
             expectedReturnDate: l.expectedReturn.toISOString().slice(0, 10),
@@ -273,6 +340,12 @@ export async function POST(req: Request) {
             "THD_SUBMISSION_MODE=json かつ DATABASE_URL あり。下流 API 用の JSON と、一覧・一時保管用にローカル DB（EquipmentReturnRequest）へ二重保存。",
           clientRequest: body,
           lines: normalizedLines.map((l) => ({
+            equipmentCode: l.equipmentCode,
+            equipmentLabel: l.equipmentLabel,
+            assetManagementNumber: l.assetManagementNumber,
+            shippingBoxChoice: l.shippingBoxChoice,
+            accessories: JSON.parse(l.accessoriesJson) as string[],
+            otherDetail: l.otherDetail,
             equipmentName: l.equipmentName,
             lendingDueDate: l.lendingDue.toISOString().slice(0, 10),
             expectedReturnDate: l.expectedReturn.toISOString().slice(0, 10),

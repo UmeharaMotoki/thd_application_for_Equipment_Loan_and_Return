@@ -1,6 +1,13 @@
+import type { LendingRequestPrefillPayload } from "@/lib/mapEquipmentRequestToPrefill";
+import type { EquipmentReturnPrefillPayload } from "@/lib/mapEquipmentReturnRequestToPrefill";
+
 const STORAGE_KEY = "thd-named-request-archives";
 
 export type NamedArchiveKind = "lending" | "return";
+
+export type NamedRequestArchivePrefill =
+  | LendingRequestPrefillPayload
+  | EquipmentReturnPrefillPayload;
 
 export type NamedRequestArchive = {
   id: string;
@@ -14,6 +21,8 @@ export type NamedRequestArchive = {
   /** 保存時の表示用スナップショット */
   applicantNameSnapshot?: string;
   userNameSnapshot?: string;
+  /** 保存時点のフォームプリフィル（申請者情報を含む）。再利用時にそのまま流し込む */
+  prefill?: NamedRequestArchivePrefill;
 };
 
 function safeParse(raw: string | null): NamedRequestArchive[] {

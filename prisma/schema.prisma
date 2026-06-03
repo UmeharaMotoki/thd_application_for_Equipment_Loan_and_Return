@@ -41,6 +41,8 @@ model EquipmentRequest {
   userPhone          String @default("")
 
   // 送付先
+  deliverySameAsUser      Boolean @default(false)
+  deliveryEmployeeNumber  String  @default("")
   deliveryName        String @default("")
   deliveryCompanyName String @default("")
   deliveryDepartment  String @default("")
@@ -79,16 +81,70 @@ model EquipmentRequest {
   expectedReturnDate DateTime @db.Date
   createdAt      DateTime @default(now())
 
+  /// single | multiple
+  userMode       String   @default("single")
+
   @@index([employeeNumber, createdAt])
-  lines          EquipmentLendingLine[]
+  lines              EquipmentLendingLine[]
+  additionalUsers    EquipmentLendingAdditionalUser[]
+  userLicenses       EquipmentLendingUserLicense[]
+}
+
+model EquipmentLendingAdditionalUser {
+  id                 String           @id @default(cuid())
+  requestId          String
+  request            EquipmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sortOrder          Int              @default(0)
+  userName           String
+  userEmployeeNumber String
+  userCompanyName    String           @default("")
+  userDepartmentName String           @default("")
+  userAddress        String           @default("")
+  userContractType   String           @default("")
+  userCostDeptName   String           @default("")
+  userCostDeptCode   String           @default("")
+  userEmail          String           @default("")
+  userPhone          String           @default("")
+
+  @@index([requestId])
+}
+
+model EquipmentLendingUserLicense {
+  id                         String           @id @default(cuid())
+  requestId                  String
+  request                    EquipmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  userEmployeeNumber         String
+  userStaffCategory          String
+  decisionContractType       String           @default("")
+  decisionWorkContent        String           @default("")
+  decisionClientEnv          String           @default("")
+  msOfficeEdition            String           @default("")
+  licenseTechnoProApply      String
+  licenseUserSoftwareInstall String
+  licenseTechnoProNetwork    String
+  licenseSpecCode            String
+
+  lendingStartDate   DateTime? @db.Date
+  expectedReturnDate DateTime? @db.Date
+  smartphoneCameraPresence       String @default("")
+  smartphoneUserIdentification   String @default("")
+  smartphoneWorkplaceUse         String @default("")
+  peripheralMonitorSize          String @default("")
+  peripheralMonitorSizeCustom    String @default("")
+  peripheralLanCableLength       String @default("")
+  peripheralLanCableLengthCustom String @default("")
+
+  @@unique([requestId, userEmployeeNumber])
+  @@index([requestId])
 }
 
 model EquipmentLendingLine {
   id            String           @id @default(cuid())
   requestId     String
   request       EquipmentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  equipmentType String
-  sortOrder     Int              @default(0)
+  equipmentType              String
+  sortOrder                  Int              @default(0)
+  assignedUserEmployeeNumber String           @default("")
 
   @@index([requestId])
 }
@@ -118,7 +174,9 @@ model EquipmentReturnRequest {
   userEmail           String @default("")
   userPhone           String @default("")
 
-  // 送付先
+  // 送付先（機器返却フォームでは未使用。貸与スキーマとの共通化のため保持）
+  deliverySameAsUser      Boolean @default(false)
+  deliveryEmployeeNumber  String  @default("")
   deliveryName        String @default("")
   deliveryCompanyName String @default("")
   deliveryDepartment  String @default("")
@@ -132,6 +190,8 @@ model EquipmentReturnRequest {
   // 申請内容
   requestReason       String
   requestDetail       String   @default("")
+  /// 返却物「その他」の詳細
+  otherItemsDetail    String   @default("")
   createdAt           DateTime @default(now())
 
   @@index([employeeNumber, createdAt])
@@ -142,9 +202,21 @@ model EquipmentReturnLine {
   id                 String   @id @default(cuid())
   requestId          String
   request            EquipmentReturnRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  /// 返却物マスタ ID（return_main_item.code）
+  equipmentCode      String   @default("")
+  /// 申請時点の表示名
+  equipmentLabel     String   @default("")
+  /// 資産管理番号（全機種必須。「その他」は空）
+  assetManagementNumber String @default("")
+  /// 返却用梱包箱（有/無。PC・モニタのみ）
+  shippingBoxChoice  String   @default("")
+  /// 選択した付属品 label の JSON 配列
+  accessoriesJson    String   @default("[]")
+  /// 「その他」返却物の行別詳細（request.otherItemsDetail と同期）
+  otherDetail        String   @default("")
   equipmentName      String
-  lendingDueDate     DateTime @db.Date
-  expectedReturnDate DateTime @db.Date
+  lendingDueDate     DateTime? @db.Date
+  expectedReturnDate DateTime? @db.Date
   sortOrder          Int      @default(0)
 
   @@index([requestId])

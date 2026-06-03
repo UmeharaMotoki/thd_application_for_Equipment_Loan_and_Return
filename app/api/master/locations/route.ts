@@ -108,6 +108,16 @@ export async function GET(req: Request) {
       const location = await findLatestThdLocationByDepartmentCode(prisma, departmentCode);
 
       if (!withCascade || !location?.area) {
+          if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.debug("[locations API]", {
+              departmentCode,
+              withCascade,
+              locationArea: location?.area ?? null,
+              locationPostalCode: location?.postalCode ?? null,
+              locationBuildingName: location?.buildingName ?? null,
+            });
+          }
         return json({ location });
       }
 

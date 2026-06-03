@@ -19,6 +19,7 @@ import {
 } from "@/lib/copyFromPastConstants";
 import type { LendingRequestPrefillPayload } from "@/lib/mapEquipmentRequestToPrefill";
 import type { EquipmentReturnPrefillPayload } from "@/lib/mapEquipmentReturnRequestToPrefill";
+import { buildArchivePrefill, enrichLendingPrefillForCopy, enrichReturnPrefillForCopy } from "@/lib/copyFromPastPrefillFetch";
 import { loadNamedRequestArchives, type NamedRequestArchive } from "@/lib/namedRequestArchives";
 
 const BRAND = "#007D9E";
@@ -128,22 +129,31 @@ export function CopyFromPastProvider({ children }: { children: ReactNode }) {
 
   const applyFromNamedArchive = useCallback(
     async (a: NamedRequestArchive) => {
-      const q = new URLSearchParams({ applicantEmployeeNumber: a.applicantEmployeeNumber });
-      if (a.kind === "lending") {
-        const res = await fetch(`/api/requests/${encodeURIComponent(a.sourceRequestId)}?${q}`);
-        const data = (await res.json()) as { prefill?: LendingRequestPrefillPayload; error?: string };
-        if (!res.ok || !data.prefill) {
-          throw new Error(data.error ?? "貸与申請の取得に失敗しました。");
+      try {
+        const prefill = await buildArchivePrefill(
+          a.kind,
+          a.sourceRequestId,
+          a.applicantNameSnapshot ?? "",
+          a.applicantEmployeeNumber,
+        );
+        if (a.kind === "lending") {
+          deliverLending(prefill as LendingRequestPrefillPayload);
+        } else {
+          deliverReturn(prefill as EquipmentReturnPrefillPayload);
         }
-        deliverLending(data.prefill);
+        return;
+      } catch (fetchError) {
+        if (!a.prefill) {
+          throw fetchError;
+        }
+      }
+
+      if (a.kind === "lending") {
+        const enriched = await enrichLendingPrefillForCopy(a.prefill as LendingRequestPrefillPayload);
+        deliverLending(enriched);
         return;
       }
-      const res = await fetch(`/api/equipment-returns/${encodeURIComponent(a.sourceRequestId)}?${q}`);
-      const data = (await res.json()) as { prefill?: EquipmentReturnPrefillPayload; error?: string };
-      if (!res.ok || !data.prefill) {
-        throw new Error(data.error ?? "返却申請の取得に失敗しました。");
-      }
-      deliverReturn(data.prefill);
+      deliverReturn(await enrichReturnPrefillForCopy(a.prefill as EquipmentReturnPrefillPayload));
     },
     [deliverLending, deliverReturn],
   );

@@ -8,9 +8,13 @@ import {
   Checkbox,
   CircularProgress,
   Divider,
+  FormControl,
   FormControlLabel,
+  FormLabel,
   Link,
   MenuItem,
+  Radio,
+  RadioGroup,
   Stack,
   Table,
   TableBody,
@@ -81,6 +85,32 @@ import {
   type EquipmentCategory,
   type LendingEquipmentTypeOption,
 } from "@/lib/lendingEquipmentOptions";
+import LendingAdditionalUsersBlock, {
+  type AdditionalUserRow,
+} from "@/components/equipment-lending/LendingAdditionalUsersBlock";
+import LendingEquipmentByUserBlock from "@/components/equipment-lending/LendingEquipmentByUserBlock";
+import LendingUserReasonBlock from "@/components/equipment-lending/LendingUserReasonBlock";
+import { buildLendingRequestBody } from "@/lib/lendingBuildRequestBody";
+import {
+  buildLendingEquipmentUserBlocks,
+  newLendingEquipmentLineForUser,
+  linesForUser,
+  syncLendingLinesForUserPool,
+  validateEquipmentStep,
+} from "@/lib/lendingEquipmentUserBlocks";
+import {
+  assignedEmployeeNumbersFromLines,
+  buildLendingUserReasonBlocks,
+  emptyUserReasonFormState,
+  validateUserReasonForBlock,
+  type UserReasonFormState,
+} from "@/lib/lendingUserReason";
+import {
+  getLendingProfileForEmployee,
+  resolveStaffCategoryForProfile,
+} from "@/lib/lendingUserProfile";
+import { newAdditionalUserRow } from "@/app/equipment-lending/lendingFormUtils";
+
 
 type ApplicantFormData = {
   applicantName: string;
@@ -150,6 +180,7 @@ type ReasonFormData = {
 type LendingEquipmentLine = {
   id: string;
   equipmentType: string;
+  assignedUserEmployeeNumber: string;
 };
 
 type DraftPayload = {
@@ -158,6 +189,9 @@ type DraftPayload = {
   delivery?: DeliveryFormData;
   lendingLines?: LendingEquipmentLine[];
   reason?: ReasonFormData;
+  userMode?: "single" | "multiple";
+  additionalUsers?: AdditionalUserRow[];
+  userReasonByEmp?: Record<string, UserReasonFormState>;
 };
 
 function newLendingEquipmentLine(): LendingEquipmentLine {
@@ -167,6 +201,7 @@ function newLendingEquipmentLine(): LendingEquipmentLine {
         ? crypto.randomUUID()
         : `lend-line-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     equipmentType: "",
+    assignedUserEmployeeNumber: "",
   };
 }
 
@@ -995,6 +1030,9 @@ export default function Home() {
   const [lendingLines, setLendingLines] = useState<LendingEquipmentLine[]>(() => [
     newLendingEquipmentLine(),
   ]);
+  const [userMode, setUserMode] = useState<"single" | "multiple">("single");
+  const [additionalUsers, setAdditionalUsers] = useState<AdditionalUserRow[]>([]);
+  const [userReasonByEmp, setUserReasonByEmp] = useState<Record<string, UserReasonFormState>>({});
   const prevIncludesPcRef = useRef(false);
   const staffAutoKeyFromUserHrRef = useRef("");
   const [applicantCandidates, setApplicantCandidates] = useState<EmployeeOption[]>([]);
@@ -1088,6 +1126,70 @@ export default function Home() {
     () => pickOptions(APPLICATION_SELECT_CATEGORIES.peripheralLanCableLength, LAN_CABLE_LENGTH_OPTIONS),
     [pickOptions],
   );
+  const msOfficeMenuOptionsPool = useMemo(
+    () =>
+      pickOptions(
+        APPLICATION_SELECT_CATEGORIES.msOfficeEdition,
+        MS_OFFICE_EDITION_STANDARD_OPTIONS,
+      ),
+    [pickOptions],
+  );
+
+  const lendingEquipmentUserBlocks = useMemo(
+    () =>
+      buildLendingEquipmentUserBlocks(
+        {
+          userName: userData.userName,
+          userEmployeeNumber: userData.userEmployeeNumber,
+          userCompanyName: userData.userCompanyName,
+          userDepartmentName: userData.userDepartmentName,
+        },
+        userMode,
+        additionalUsers,
+      ),
+    [userData, userMode, additionalUsers],
+  );
+
+  const assignedEmployeeNumbers = useMemo(
+    () => assignedEmployeeNumbersFromLines(lendingLines, userData.userEmployeeNumber),
+    [lendingLines, userData.userEmployeeNumber],
+  );
+
+  const lendingUserReasonBlocks = useMemo(
+    () =>
+      buildLendingUserReasonBlocks(
+        lendingEquipmentUserBlocks,
+        lendingLines,
+        userData.userEmployeeNumber,
+      ),
+    [lendingEquipmentUserBlocks, lendingLines, userData.userEmployeeNumber],
+  );
+
+  const lendingRequestBody = useMemo(
+    () =>
+      buildLendingRequestBody({
+        applicantData,
+        userData,
+        deliveryData,
+        reasonData,
+        lendingLines,
+        userMode,
+        additionalUsers,
+        userReasonByEmp,
+        assignedEmployeeNumbers,
+      }),
+    [
+      applicantData,
+      userData,
+      deliveryData,
+      reasonData,
+      lendingLines,
+      userMode,
+      additionalUsers,
+      userReasonByEmp,
+      assignedEmployeeNumbers,
+    ],
+  );
 
   useEffect(() => {
     const savedDraft = localStorage.getItem(DRAFT_KEY);
@@ -1156,8 +1258,21 @@ export default function Home() {
                   : newLendingEquipmentLine().id,
               equipmentType:
                 typeof row.equipmentType === "string" ? row.equipmentType : "",
+              assignedUserEmployeeNumber:
+                typeof (row as LendingEquipmentLine).assignedUserEmployeeNumber === "string"
+                  ? (row as LendingEquipmentLine).assignedUserEmployeeNumber
+                  : "",
             })),
           );
+        }
+        if ("userMode" in parsed && (parsed.userMode === "single" || parsed.userMode === "multiple")) {
+          setUserMode(parsed.userMode);
+        }
+        if (Array.isArray(parsed.additionalUsers)) {
+          setAdditionalUsers(parsed.additionalUsers as AdditionalUserRow[]);
+        }
+        if (parsed.userReasonByEmp && typeof parsed.userReasonByEmp === "object") {
+          setUserReasonByEmp(parsed.userReasonByEmp as Record<string, UserReasonFormState>);
         }
         if (reasonDraft) {
           const r = reasonDraft as ReasonFormData & Record<string, unknown>;
@@ -1193,9 +1308,12 @@ export default function Home() {
       delivery: deliveryData,
       lendingLines,
       reason: reasonData,
+      userMode,
+      additionalUsers,
+      userReasonByEmp,
     };
     localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
-  }, [applicantData, userData, deliveryData, lendingLines, reasonData]);
+  }, [applicantData, userData, deliveryData, lendingLines, reasonData, userMode, additionalUsers, userReasonByEmp]);
 
   /** 送付先「利用者と同じ」時、利用者の所属・住所を同期し、拠点マスタで郵便番号・住所を補完する */
   useEffect(() => {
@@ -1254,6 +1372,34 @@ export default function Home() {
     userData.userEmail,
     userData.userPhone,
   ]);
+
+
+  useEffect(() => {
+    if (step !== "reason") return;
+    const repEmp = userData.userEmployeeNumber.trim();
+    setUserReasonByEmp((prev) => {
+      let next = { ...prev };
+      let changed = false;
+      for (const emp of assignedEmployeeNumbers) {
+        if (next[emp]) continue;
+        const profile = getLendingProfileForEmployee(emp, userData, additionalUsers);
+        const staff = resolveStaffCategoryForProfile(profile);
+        const repReason = repEmp && next[repEmp] ? next[repEmp] : null;
+        next[emp] = {
+          ...emptyUserReasonFormState(),
+          userStaffCategory: staff,
+          ...(repReason
+            ? {
+                lendingStartDate: repReason.lendingStartDate,
+                expectedReturnDate: repReason.expectedReturnDate,
+              }
+            : {}),
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [step, assignedEmployeeNumbers, userData, additionalUsers]);
 
   useEffect(() => {
     if (step !== "reason") return;
@@ -1440,77 +1586,28 @@ export default function Home() {
     derivedUserStaffCategory,
   ]);
 
-  const equipmentStepOk = useMemo(
-    () => lendingLines.length > 0 && lendingLines.every((l) => l.equipmentType.trim() !== ""),
-    [lendingLines],
-  );
+  const equipmentStepOk = useMemo(() => {
+    const result = validateEquipmentStep(lendingLines, lendingEquipmentUserBlocks);
+    return result.ok;
+  }, [lendingLines, lendingEquipmentUserBlocks]);
 
   const reasonStepCanProceed = useMemo(() => {
     if (!reasonData.requestReason.trim()) return false;
-    if (!lendingDatesOk) return false;
-    if (includesPc) {
-      const staff = userData.userStaffCategory.trim();
-      if (staff !== STAFF_MANAGEMENT && staff !== STAFF_TECHNICAL) return false;
-      if (
-        !reasonData.msOfficeEdition.trim() ||
-        !isMsOfficeEditionAllowedForPcDecision(
-          userData.userStaffCategory,
-          reasonData.decisionContractType,
-          reasonData.decisionWorkContent,
-          reasonData.decisionClientEnv,
-          reasonData.msOfficeEdition,
-        )
-      ) {
-        return false;
-      }
-      if (!derivedLicense || decisionResolution.kind === "lending_denied") return false;
-    }
-    if (includesSmartphone) {
-      if (
-        !reasonData.smartphoneCameraPresence.trim() ||
-        !reasonData.smartphoneUserIdentification.trim() ||
-        !reasonData.smartphoneWorkplaceUse.trim()
-      )
-        return false;
-    }
-    if (includesMonitor) {
-      if (!reasonData.peripheralMonitorSize.trim()) return false;
-      if (
-        reasonData.peripheralMonitorSize === "その他" &&
-        !reasonData.peripheralMonitorSizeCustom.trim()
-      )
-        return false;
-    }
-    if (includesLanCable) {
-      if (!reasonData.peripheralLanCableLength.trim()) return false;
-      if (
-        reasonData.peripheralLanCableLength === "その他" &&
-        !reasonData.peripheralLanCableLengthCustom.trim()
-      )
-        return false;
-    }
-    return true;
+    if (lendingUserReasonBlocks.length === 0) return false;
+    return lendingUserReasonBlocks.every((block) =>
+      validateUserReasonForBlock(
+        block,
+        userReasonByEmp[block.employeeNumber] ?? emptyUserReasonFormState(),
+        minSelectableDate,
+        isSelectableBusinessDate,
+      ),
+    );
   }, [
     reasonData.requestReason,
-    lendingDatesOk,
-    includesPc,
-    userData.userStaffCategory,
-    reasonData.msOfficeEdition,
-    reasonData.decisionContractType,
-    reasonData.decisionWorkContent,
-    reasonData.decisionClientEnv,
-    includesSmartphone,
-    includesMonitor,
-    includesLanCable,
-    derivedLicense,
-    decisionResolution.kind,
-    reasonData.smartphoneCameraPresence,
-    reasonData.smartphoneUserIdentification,
-    reasonData.smartphoneWorkplaceUse,
-    reasonData.peripheralMonitorSize,
-    reasonData.peripheralMonitorSizeCustom,
-    reasonData.peripheralLanCableLength,
-    reasonData.peripheralLanCableLengthCustom,
+    lendingUserReasonBlocks,
+    userReasonByEmp,
+    minSelectableDate,
+    isSelectableBusinessDate,
   ]);
 
   useEffect(() => {
@@ -1837,7 +1934,7 @@ export default function Home() {
       setMessage({ type: "error", text: EQUIPMENT_LENDING_RETIRED_BLOCKED_MESSAGE });
       return;
     }
-    setStep("equipment");
+    setStep("user");
   };
 
   const handleUserNext = (event: FormEvent<HTMLFormElement>) => {
@@ -1854,13 +1951,28 @@ export default function Home() {
       setMessage({ type: "error", text: EQUIPMENT_LENDING_RETIRED_BLOCKED_MESSAGE });
       return;
     }
-    if (lendingLinesIncludePc(lendingLines) && !userData.userStaffCategory.trim()) {
-      setMessage({
-        type: "error",
-        text: "PC を含む申請では、利用者区分（管理社員／技術社員）を選択してください。",
-      });
-      return;
+    if (userMode === "multiple") {
+      for (const row of additionalUsers) {
+        if (!row.userEmployeeNumber.trim()) {
+          setMessage({
+            type: "error",
+            text: "追加利用者の社員番号をすべて入力してください。",
+          });
+          return;
+        }
+      }
     }
+    const pool = buildLendingEquipmentUserBlocks(
+      {
+        userName: userData.userName,
+        userEmployeeNumber: userData.userEmployeeNumber,
+        userCompanyName: userData.userCompanyName,
+        userDepartmentName: userData.userDepartmentName,
+      },
+      userMode,
+      additionalUsers,
+    );
+    setLendingLines((prev) => syncLendingLinesForUserPool(prev, pool));
     if (deliveryData.deliverySameAsUser) {
       setDeliveryData({
         deliverySameAsUser: true,
@@ -1876,7 +1988,7 @@ export default function Home() {
         deliveryPhone: userData.userPhone,
       });
     }
-    setStep("delivery");
+    setStep("equipment");
   };
 
   const handleDeliveryNext = (event: FormEvent<HTMLFormElement>) => {
@@ -1928,57 +2040,25 @@ export default function Home() {
   const handleEquipmentNext = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);
-    if (!equipmentStepOk) {
-      setMessage({
-        type: "error",
-        text: "各行で貸与機器の種類を選択してください。追加する場合は「機器を追加」から行を増やせます。",
-      });
+    const pool = buildLendingEquipmentUserBlocks(
+      {
+        userName: userData.userName,
+        userEmployeeNumber: userData.userEmployeeNumber,
+        userCompanyName: userData.userCompanyName,
+        userDepartmentName: userData.userDepartmentName,
+      },
+      userMode,
+      additionalUsers,
+    );
+    const validation = validateEquipmentStep(lendingLines, pool);
+    if (!validation.ok) {
+      setMessage({ type: "error", text: validation.message });
       return;
     }
-  setStep("user");
+    setStep("delivery");
   };
 
-  const buildLendingRequestBody = () => {
-    const pc = lendingLinesIncludePc(lendingLines);
-    const delivery = deliveryData.deliverySameAsUser
-      ? {
-          deliveryName: userData.userName,
-          deliveryCompanyName: userData.userCompanyName,
-          deliveryDepartment: userData.userDepartmentName,
-          deliveryArea: "",
-          deliveryPostalCode: "",
-          deliveryAddress: userData.userAddress,
-          deliveryBuilding: "",
-          deliveryEmail: userData.userEmail,
-          deliveryPhone: userData.userPhone,
-        }
-      : {
-          deliveryName: deliveryData.deliveryName,
-          deliveryCompanyName: deliveryData.deliveryCompanyName,
-          deliveryDepartment: deliveryData.deliveryDepartment,
-          deliveryArea: deliveryData.deliveryArea,
-          deliveryPostalCode: deliveryData.deliveryPostalCode,
-          deliveryAddress: deliveryData.deliveryAddress,
-          deliveryBuilding: deliveryData.deliveryBuilding,
-          deliveryEmail: deliveryData.deliveryEmail,
-          deliveryPhone: deliveryData.deliveryPhone,
-        };
-    const { applicationCorrelationId, ...reasonRest } = reasonData;
-    return {
-      ...applicantData,
-      ...userData,
-      ...delivery,
-      ...reasonRest,
-      ...(applicationCorrelationId.trim()
-        ? { applicationCorrelationId: applicationCorrelationId.trim() }
-        : {}),
-      userStaffCategory: pc ? userData.userStaffCategory : LENDING_NON_PC_STAFF_CATEGORY,
-      decisionContractType: pc ? reasonData.decisionContractType : "",
-      decisionWorkContent: pc ? reasonData.decisionWorkContent : "",
-      decisionClientEnv: pc ? reasonData.decisionClientEnv : "",
-      lines: lendingLines.map(({ equipmentType }) => ({ equipmentType })),
-    };
-  };
+
 
   const handleReasonContinue = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1992,46 +2072,27 @@ export default function Home() {
       return;
     }
 
-    if (includesPc) {
-      if (!reasonData.msOfficeEdition.trim()) {
-        setMessage({ type: "error", text: "MicrosoftOfficeのエディションを選択してください。" });
-        return;
-      }
+    if (!reasonData.requestReason.trim()) {
+      setMessage({ type: "error", text: "申請理由を選択してください。" });
+      return;
+    }
+
+    for (const block of lendingUserReasonBlocks) {
+      const reason = userReasonByEmp[block.employeeNumber] ?? emptyUserReasonFormState();
       if (
-        !isMsOfficeEditionAllowedForPcDecision(
-          userData.userStaffCategory,
-          reasonData.decisionContractType,
-          reasonData.decisionWorkContent,
-          reasonData.decisionClientEnv,
-          reasonData.msOfficeEdition,
+        !validateUserReasonForBlock(
+          block,
+          reason,
+          minSelectableDate,
+          isSelectableBusinessDate,
         )
       ) {
         setMessage({
           type: "error",
-          text: "現在の判定に対して選択できない MicrosoftOffice のエディションです。客先ネットワーク接続や契約形態を確認してください。",
+          text: `「${block.userName}」の申請理由・貸与期間・機器別設定を確認してください。`,
         });
         return;
       }
-      const fields = decisionResolutionToLicenseFields(decisionResolution);
-      if (!fields) {
-        if (decisionResolution.kind === "lending_denied") {
-          setMessage({ type: "error", text: decisionResolution.message });
-        } else {
-          setMessage({
-            type: "error",
-            text: "利用者区分と判定プロセスを正しく選択してください。",
-          });
-        }
-        return;
-      }
-    }
-
-    if (!lendingDatesOk) {
-      setMessage({
-        type: "error",
-        text: "貸与開始日・返却予定日は本日から1週間後以降の平日を選択し、返却予定日は貸与開始日以降にしてください。",
-      });
-      return;
     }
 
     setStep("confirm");
@@ -2058,7 +2119,7 @@ export default function Home() {
       const response = await fetch("/api/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildLendingRequestBody()),
+        body: JSON.stringify(lendingRequestBody),
       });
       const data = await parseApiJson(response);
       if (!response.ok) {
@@ -2081,6 +2142,9 @@ export default function Home() {
       setRevealUserDetailFields(false);
       setReasonData(initialReason);
       setLendingLines([newLendingEquipmentLine()]);
+      setUserMode("single");
+      setAdditionalUsers([]);
+      setUserReasonByEmp({});
       setApplicantCandidates([]);
       setSelectedApplicantEmployeeId(null);
       setUserCandidates([]);
@@ -2109,9 +2173,30 @@ export default function Home() {
       ...prefill.delivery,
       deliveryEmployeeNumber: prefill.delivery.deliveryEmployeeNumber ?? "",
     });
-    setLendingLines(
-      prefill.lendingLines.length > 0 ? prefill.lendingLines : [newLendingEquipmentLine()],
-    );
+    const pre = prefill as LendingRequestPrefillPayload & {
+      userMode?: "single" | "multiple";
+      additionalUsers?: AdditionalUserRow[];
+      userLicenses?: Array<UserReasonFormState & { userEmployeeNumber: string }>;
+    };
+    setUserMode(pre.userMode === "multiple" ? "multiple" : "single");
+    setAdditionalUsers(pre.additionalUsers ?? []);
+    const lines =
+      prefill.lendingLines.length > 0
+        ? prefill.lendingLines.map((row) => ({
+            id: row.id,
+            equipmentType: row.equipmentType,
+            assignedUserEmployeeNumber: row.assignedUserEmployeeNumber ?? "",
+          }))
+        : [newLendingEquipmentLine()];
+    setLendingLines(lines);
+    const byEmp: Record<string, UserReasonFormState> = {};
+    for (const lic of pre.userLicenses ?? []) {
+      const emp = lic.userEmployeeNumber?.trim();
+      if (!emp) continue;
+      const { userEmployeeNumber: _u, ...rest } = lic;
+      byEmp[emp] = { ...emptyUserReasonFormState(), ...rest };
+    }
+    setUserReasonByEmp(byEmp);
     setReasonData(prefill.reason);
     staffAutoKeyFromUserHrRef.current = "";
     setRevealApplicantEmployeeField(true);
@@ -2399,124 +2484,31 @@ export default function Home() {
                 </Stack>
               </Box>
             </>
-        ) : step === "equipment" ? (
-          <>
-            <Typography sx={{ fontSize: 24, mb: 1, padding: "20px 0 12px 0" }}>
-              Q. 貸与する機器の種類を選択してください（複数ある場合は「機器を追加」で行を増やせます）
-            </Typography>
-            <Box component="form" onSubmit={handleEquipmentNext} sx={{ width: "95%", margin: "0 auto" }}>
-              <Stack spacing={2.5}>
-                {lendingLines.map((line, index) => (
-                  <Box
-                    key={line.id}
-                    sx={{
-                      border: "1px solid #e8e8e8",
-                      borderRadius: 1,
-                      p: 2,
-                      bgcolor: "#fafafa",
-                    }}
-                  >
-                    <Typography sx={{ fontSize: 16, fontWeight: 600, mb: 1.5 }}>
-                      機器 {index + 1}
-                    </Typography>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                      <Typography sx={{ ...formRowLabelSx, width: 140 }}>機器の種類</Typography>
-                      <Box sx={{ ...formRowFieldCellSx, minWidth: 220 }}>
-                        <TextField
-                          select
-                          required
-                          label="選択"
-                          value={line.equipmentType}
-                          onChange={(e) =>
-                            updateLendingLine(line.id, { equipmentType: e.target.value })
-                          }
-                          fullWidth
-                          size="small"
-                          sx={textFieldRowSx}
-                        >
-                          <MenuItem value="" disabled>
-                            選択してください
-                          </MenuItem>
-                          {lendingEquipmentTypeOptions.map((opt) => (
-                            <MenuItem key={opt} value={opt}>
-                              {opt}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      </Box>
-                    </Box>
-                    {lendingLines.length > 1 && (
-                      <Box sx={{ mt: 1 }}>
-                        <Button
-                          type="button"
-                          size="small"
-                          color="inherit"
-                          onClick={() => removeLendingLine(line.id)}
-                        >
-                          この行を削除
-                        </Button>
-                      </Box>
-                    )}
-                  </Box>
-                ))}
-                <Box>
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    onClick={addLendingLine}
-                    sx={{
-                      borderRadius: 999,
-                      height: 46,
-                      fontSize: 18,
-                      borderColor: "#c9c9c9",
-                      color: "#333",
-                    }}
-                  >
-                    機器を追加
-                  </Button>
-                </Box>
-                {message && <Alert severity={message.type}>{message.text}</Alert>}
-                <Box sx={{ display: "flex", justifyContent: "center", gap: 2, pt: 1 }}>
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    onClick={() => setStep("applicant")}
-                    sx={{
-                      borderRadius: 999,
-                      width: 180,
-                      height: 46,
-                      fontSize: 18,
-                      borderColor: "#c9c9c9",
-                      color: "#333",
-                    }}
-                  >
-                    戻る
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    disabled={!equipmentStepOk}
-                    sx={{
-                      width: 180,
-                      height: 46,
-                      borderRadius: 999,
-                      backgroundColor: brandColor,
-                      fontSize: 18,
-                      "&:hover": { backgroundColor: "#006c88" },
-                    }}
-                  >
-                    次へ
-                  </Button>
-                </Box>
-              </Stack>
-            </Box>
-          </>
         ) : step === "user" ? (
             <>
               <Box>
                 <Typography sx={{ fontSize: 24, mb: 1, padding: "20px 0 20px 0" }}>
                   Q. 利用者情報を入力してください
                 </Typography>
+              </Box>
+              <Box sx={{ width: "90%", margin: "0 auto", mb: 2 }}>
+                <FormControl component="fieldset">
+                  <FormLabel component="legend" sx={{ fontSize: 16, mb: 1 }}>
+                    利用者の人数
+                  </FormLabel>
+                  <RadioGroup
+                    row
+                    value={userMode}
+                    onChange={(_, v) => {
+                      const mode = v === "multiple" ? "multiple" : "single";
+                      setUserMode(mode);
+                      if (mode === "single") setAdditionalUsers([]);
+                    }}
+                  >
+                    <FormControlLabel value="single" control={<Radio />} label="1人" />
+                    <FormControlLabel value="multiple" control={<Radio />} label="複数" />
+                  </RadioGroup>
+                </FormControl>
               </Box>
               <Box component="form" onSubmit={handleUserNext} sx={{ width: "90%", margin: "0 auto" }}>
                 <Stack spacing={2.2}>
@@ -2739,6 +2731,27 @@ export default function Home() {
                       </Box>
                     </>
                   )}
+                  {userMode === "multiple" && (
+                    <LendingAdditionalUsersBlock
+                      rows={additionalUsers}
+                      representative={{
+                        userCompanyName: userData.userCompanyName,
+                        userDepartmentName: userData.userDepartmentName,
+                      }}
+                      onAdd={() => setAdditionalUsers((prev) => [...prev, newAdditionalUserRow()])}
+                      onRemove={(id) =>
+                        setAdditionalUsers((prev) => prev.filter((r) => r.id !== id))
+                      }
+                      onChange={(id, patch) =>
+                        setAdditionalUsers((prev) =>
+                          prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+                        )
+                      }
+                      textFieldRowSx={textFieldRowSx}
+                      formRowLabelSx={formRowLabelSx}
+                      formRowFieldCellSx={formRowFieldCellSx}
+                    />
+                  )}
                   {userRetired && (
                     <Alert severity="warning" sx={{ "& .MuiAlert-message": { width: "100%" } }}>
                       {EQUIPMENT_LENDING_RETIRED_BLOCKED_MESSAGE}
@@ -2753,7 +2766,7 @@ export default function Home() {
                     <Button
                       type="button"
                       variant="outlined"
-                      onClick={() => setStep("equipment")}
+                      onClick={() => setStep("applicant")}
                       sx={{
                         borderRadius: 999,
                         width: 180,
@@ -2784,6 +2797,66 @@ export default function Home() {
                 </Stack>
               </Box>
             </>
+        ) : step === "equipment" ? (
+          <>
+            <Typography sx={{ fontSize: 24, mb: 1, padding: "20px 0 12px 0" }}>
+              Q. 利用者ごとに貸与する機器を選択してください
+            </Typography>
+            <Box component="form" onSubmit={handleEquipmentNext} sx={{ width: "95%", margin: "0 auto" }}>
+              <Stack spacing={2.5}>
+                <LendingEquipmentByUserBlock
+                  blocks={lendingEquipmentUserBlocks}
+                  lendingLines={lendingLines}
+                  representativeEmployeeNumber={userData.userEmployeeNumber}
+                  equipmentTypeOptions={lendingEquipmentTypeOptions}
+                  onAddLine={(employeeNumber) =>
+                    setLendingLines((prev) => [
+                      ...prev,
+                      newLendingEquipmentLineForUser(employeeNumber),
+                    ])
+                  }
+                  onRemoveLine={removeLendingLine}
+                  onUpdateLine={updateLendingLine}
+                  textFieldRowSx={textFieldRowSx}
+                  formRowLabelSx={formRowLabelSx}
+                  formRowFieldCellSx={formRowFieldCellSx}
+                />
+                {message && <Alert severity={message.type}>{message.text}</Alert>}
+                <Box sx={{ display: "flex", justifyContent: "center", gap: 2, pt: 1 }}>
+                  <Button
+                    type="button"
+                    variant="outlined"
+                    onClick={() => setStep("user")}
+                    sx={{
+                      borderRadius: 999,
+                      width: 180,
+                      height: 46,
+                      fontSize: 18,
+                      borderColor: "#c9c9c9",
+                      color: "#333",
+                    }}
+                  >
+                    戻る
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    disabled={!equipmentStepOk}
+                    sx={{
+                      width: 180,
+                      height: 46,
+                      borderRadius: 999,
+                      backgroundColor: brandColor,
+                      fontSize: 18,
+                      "&:hover": { backgroundColor: "#006c88" },
+                    }}
+                  >
+                    次へ
+                  </Button>
+                </Box>
+              </Stack>
+            </Box>
+          </>
         ) : step === "delivery" ? (
             <DeliveryStep
               brandColor={brandColor}
@@ -2794,7 +2867,7 @@ export default function Home() {
               deliveryRecipientRetired={deliveryRecipientRetired}
               setDeliveryRecipientRetired={setDeliveryRecipientRetired}
               message={message}
-              onBack={() => setStep("user")}
+              onBack={() => setStep("equipment")}
               onNext={handleDeliveryNext}
               formRowLabelSx={formRowLabelSx}
               formRowFieldCellSx={formRowFieldCellSx}
@@ -2835,501 +2908,44 @@ export default function Home() {
                       </TextField>
                     </Box>
                   </Box>
-                  {/* ── PC セクション ── */}
-                  {includesPc && (
-                    <Box sx={{ border: "1px solid #e0e0e0", borderRadius: 1, p: 2, bgcolor: "#fafafa" }}>
-                      <Typography sx={{ fontWeight: 700, fontSize: 16, mb: 1.5, color: "#007D9E" }}>
-                        {EQUIPMENT_CATEGORY_LABEL.pc}
-                      </Typography>
-                      <Stack spacing={2.2}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <Typography sx={formRowLabelSx}>利用者区分</Typography>
-                          <Box sx={formRowFieldCellSx}>
-                            <TextField
-                              select
-                              value={userData.userStaffCategory}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setUserData((prev) => ({ ...prev, userStaffCategory: v }));
-                                if (v === STAFF_MANAGEMENT) {
-                                  setReasonData((prev) => ({
-                                    ...prev,
-                                    decisionContractType: "",
-                                    decisionWorkContent: "",
-                                    decisionClientEnv: "",
-                                  }));
-                                }
-                              }}
-                              required
-                              fullWidth
-                              size="small"
-                              sx={textFieldRowSx}
-                              helperText="人事マスタと異なる場合は、ここで区分を修正してください。"
-                            >
-                              <MenuItem value="" disabled>
-                                選択してください
-                              </MenuItem>
-                              {userStaffCategoryOptions.map((opt) => (
-                                <MenuItem key={opt} value={opt}>
-                                  {opt}
-                                </MenuItem>
-                              ))}
-                            </TextField>
-                          </Box>
-                        </Box>
-                        {userData.userStaffCategory === STAFF_TECHNICAL && (
-                          <>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                              <Typography sx={formRowLabelSx}>契約形態</Typography>
-                              <Box sx={formRowFieldCellSx}>
-                                <TextField
-                                  select
-                                  value={reasonData.decisionContractType}
-                                  onChange={(e) =>
-                                    setReasonData((prev) => ({
-                                      ...prev,
-                                      decisionContractType: e.target.value,
-                                    }))
-                                  }
-                                  required
-                                  fullWidth
-                                  size="small"
-                                  sx={textFieldRowSx}
-                                >
-                                  <MenuItem value="" disabled>
-                                    選択してください
-                                  </MenuItem>
-                                  {decisionContractTypeOptions.map((opt) => (
-                                    <MenuItem key={opt} value={opt}>
-                                      {opt}
-                                    </MenuItem>
-                                  ))}
-                                </TextField>
-                              </Box>
-                            </Box>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                              <Typography sx={formRowLabelSx}>業務内容</Typography>
-                              <Box sx={formRowFieldCellSx}>
-                                <TextField
-                                  select
-                                  value={reasonData.decisionWorkContent}
-                                  onChange={(e) =>
-                                    setReasonData((prev) => ({
-                                      ...prev,
-                                      decisionWorkContent: e.target.value,
-                                    }))
-                                  }
-                                  required
-                                  fullWidth
-                                  size="small"
-                                  sx={textFieldRowSx}
-                                >
-                                  <MenuItem value="" disabled>
-                                    選択してください
-                                  </MenuItem>
-                                  {decisionWorkContentOptions.map((opt) => (
-                                    <MenuItem key={opt} value={opt}>
-                                      {opt}
-                                    </MenuItem>
-                                  ))}
-                                </TextField>
-                              </Box>
-                            </Box>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                              <Typography sx={formRowLabelSx}>客先ネットワーク接続の有無</Typography>
-                              <Box sx={formRowFieldCellSx}>
-                                <TextField
-                                  select
-                                  value={reasonData.decisionClientEnv}
-                                  onChange={(e) =>
-                                    setReasonData((prev) => ({
-                                      ...prev,
-                                      decisionClientEnv: e.target.value,
-                                    }))
-                                  }
-                                  required
-                                  fullWidth
-                                  size="small"
-                                  sx={textFieldRowSx}
-                                >
-                                  <MenuItem value="" disabled>
-                                    選択してください
-                                  </MenuItem>
-                                  {decisionClientEnvOptions.map((opt) => (
-                                    <MenuItem key={opt} value={opt}>
-                                      {opt}
-                                    </MenuItem>
-                                  ))}
-                                </TextField>
-                              </Box>
-                            </Box>
-                          </>
-                        )}
-                        {(userData.userStaffCategory === STAFF_MANAGEMENT ||
-                          userData.userStaffCategory === STAFF_TECHNICAL) && (
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                            <Typography sx={formRowLabelSx}>MicrosoftOfficeのエディション</Typography>
-                            <Box sx={formRowFieldCellSx}>
-                              <TextField
-                                select
-                                value={reasonData.msOfficeEdition}
-                                onChange={(e) =>
-                                  setReasonData((prev) => ({
-                                    ...prev,
-                                    msOfficeEdition: e.target.value,
-                                  }))
-                                }
-                                required
-                                fullWidth
-                                size="small"
-                                disabled={msOfficeMenuOptions.length === 0}
-                                helperText={
-                                  userData.userStaffCategory === STAFF_TECHNICAL &&
-                                  !reasonData.decisionClientEnv.trim()
-                                    ? "先に客先ネットワーク接続の有無を選択してください。"
-                                    : userData.userStaffCategory === STAFF_TECHNICAL &&
-                                        msOfficeMenuOptions.length === 0
-                                      ? "この組み合わせでは MicrosoftOffice の選択肢がありません。判定フローをご確認ください。"
-                                      : ""
-                                }
-                                sx={textFieldRowSx}
-                              >
-                                <MenuItem value="" disabled>
-                                  選択してください
-                                </MenuItem>
-                                {msOfficeMenuOptions.map((edition) => (
-                                  <MenuItem key={edition} value={edition}>
-                                    {edition}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
-                            </Box>
-                          </Box>
-                        )}
-                        {decisionResolution.kind === "lending_denied" && (
-                          <Alert severity="error">
-                            <Typography component="span" sx={{ fontSize: "inherit" }}>
-                              {decisionResolution.message}
-                            </Typography>
-                            <Typography component="div" sx={{ mt: 0.5, fontSize: 13 }}>
-                              <Link href="/pc-spec-flow" target="_blank" rel="noopener noreferrer">
-                                判定フローはこちら
-                              </Link>
-                            </Typography>
-                          </Alert>
-                        )}
-                        {derivedLicense && decisionResolution.kind === "management_internal" && (
-                          <Alert severity="info" sx={{ "& .MuiAlert-message": { width: "100%" } }}>
-                            <PcInitialSettingsTitle />
-                            <Typography sx={{ fontSize: 13, color: "#555", mb: 0.5 }}>
-                              管理社員・社内仕様（固定。仕様①〜④の表とは別区分）
-                            </Typography>
-                            <PcInitialSettingsTable
-                              userInstall="×"
-                              network="○"
-                              licenseApply="○"
-                            />
-                          </Alert>
-                        )}
-                        {derivedLicense && technicalSpecCode !== null && (
-                          <Alert severity="info" sx={{ "& .MuiAlert-message": { width: "100%" } }}>
-                            <PcInitialSettingsTitle />
-                            <PcInitialSettingsTable
-                              userInstall={LICENSE_SPEC_ROWS[technicalSpecCode].userInstall}
-                              network={LICENSE_SPEC_ROWS[technicalSpecCode].network}
-                              licenseApply={LICENSE_SPEC_ROWS[technicalSpecCode].licenseApply}
-                            />
-                          </Alert>
-                        )}
-                      </Stack>
-                    </Box>
-                  )}
-
-                  {/* ── 通信機器セクション ── */}
-                  {includesCommunication && (
-                    <Box sx={{ border: "1px solid #e0e0e0", borderRadius: 1, p: 2, bgcolor: "#fafafa" }}>
-                      <Typography sx={{ fontWeight: 700, fontSize: 16, mb: 1.5, color: "#007D9E" }}>
-                        {EQUIPMENT_CATEGORY_LABEL.communication}
-                      </Typography>
-                      <Stack spacing={2}>
-                        {includesSmartphone && (
-                          <Box sx={{ border: "1px solid #e8e8e8", borderRadius: 1, p: 2, bgcolor: "#fff" }}>
-                            <Typography sx={{ fontWeight: 600, fontSize: 15, mb: 1.5 }}>スマホ</Typography>
-                            <Stack spacing={2.2}>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                <Typography sx={formRowLabelSx}>カメラ利用の有無</Typography>
-                                <Box sx={formRowFieldCellSx}>
-                                  <TextField
-                                    select
-                                    value={reasonData.smartphoneCameraPresence}
-                                    onChange={(e) =>
-                                      setReasonData((prev) => ({
-                                        ...prev,
-                                        smartphoneCameraPresence: e.target.value,
-                                      }))
-                                    }
-                                    required
-                                    fullWidth
-                                    size="small"
-                                    sx={textFieldRowSx}
-                                  >
-                                    <MenuItem value="" disabled>選択してください</MenuItem>
-                                    {smartphoneCameraOptions.map((opt) => (
-                                      <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                                    ))}
-                                  </TextField>
-                                </Box>
-                              </Box>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                <Typography sx={formRowLabelSx}>スマホの利用者の特定の有無</Typography>
-                                <Box sx={formRowFieldCellSx}>
-                                  <TextField
-                                    select
-                                    value={reasonData.smartphoneUserIdentification}
-                                    onChange={(e) =>
-                                      setReasonData((prev) => ({
-                                        ...prev,
-                                        smartphoneUserIdentification: e.target.value,
-                                      }))
-                                    }
-                                    required
-                                    fullWidth
-                                    size="small"
-                                    sx={textFieldRowSx}
-                                  >
-                                    <MenuItem value="" disabled>選択してください</MenuItem>
-                                    {smartphoneUserIdentificationOptions.map((opt) => (
-                                      <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                                    ))}
-                                  </TextField>
-                                </Box>
-                              </Box>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                <Typography sx={formRowLabelSx}>スマホの事業場での利用</Typography>
-                                <Box sx={formRowFieldCellSx}>
-                                  <TextField
-                                    select
-                                    value={reasonData.smartphoneWorkplaceUse}
-                                    onChange={(e) =>
-                                      setReasonData((prev) => ({
-                                        ...prev,
-                                        smartphoneWorkplaceUse: e.target.value,
-                                      }))
-                                    }
-                                    required
-                                    fullWidth
-                                    size="small"
-                                    sx={textFieldRowSx}
-                                  >
-                                    <MenuItem value="" disabled>選択してください</MenuItem>
-                                    {smartphoneWorkplaceOptions.map((opt) => (
-                                      <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                                    ))}
-                                  </TextField>
-                                </Box>
-                              </Box>
-                            </Stack>
-                          </Box>
-                        )}
-                        {includesWifiRouter && (
-                          <Box sx={{ border: "1px solid #e8e8e8", borderRadius: 1, p: 2, bgcolor: "#fff" }}>
-                            <Typography sx={{ fontWeight: 600, fontSize: 15, mb: 0.5 }}>Wifiルーター</Typography>
-                            <Alert severity="info" sx={{ mt: 1 }}>
-                              Wifiルーターに関する追加の入力事項はありません。
-                            </Alert>
-                          </Box>
-                        )}
-                      </Stack>
-                    </Box>
-                  )}
-
-                  {/* ── 周辺機器セクション ── */}
-                  {includesPeripheral && (
-                    <Box sx={{ border: "1px solid #e0e0e0", borderRadius: 1, p: 2, bgcolor: "#fafafa" }}>
-                      <Typography sx={{ fontWeight: 700, fontSize: 16, mb: 1.5, color: "#007D9E" }}>
-                        {EQUIPMENT_CATEGORY_LABEL.peripheral}
-                      </Typography>
-                      <Stack spacing={2}>
-                        {includesMonitor && (
-                          <Box sx={{ border: "1px solid #e8e8e8", borderRadius: 1, p: 2, bgcolor: "#fff" }}>
-                            <Typography sx={{ fontWeight: 600, fontSize: 15, mb: 1.5 }}>モニター</Typography>
-                            <Stack spacing={2.2}>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                <Typography sx={formRowLabelSx}>サイズ</Typography>
-                                <Box sx={formRowFieldCellSx}>
-                                  <TextField
-                                    select
-                                    value={reasonData.peripheralMonitorSize}
-                                    onChange={(e) =>
-                                      setReasonData((prev) => ({
-                                        ...prev,
-                                        peripheralMonitorSize: e.target.value,
-                                        ...(e.target.value !== "その他" ? { peripheralMonitorSizeCustom: "" } : {}),
-                                      }))
-                                    }
-                                    required
-                                    fullWidth
-                                    size="small"
-                                    sx={textFieldRowSx}
-                                  >
-                                    <MenuItem value="" disabled>選択してください</MenuItem>
-                                    {peripheralMonitorSizeOptions.map((opt) => (
-                                      <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                                    ))}
-                                  </TextField>
-                                </Box>
-                              </Box>
-                              {reasonData.peripheralMonitorSize === "その他" && (
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                  <Typography sx={formRowLabelSx}>サイズ（詳細）</Typography>
-                                  <Box sx={formRowFieldCellSx}>
-                                    <TextField
-                                      value={reasonData.peripheralMonitorSizeCustom}
-                                      onChange={(e) =>
-                                        setReasonData((prev) => ({
-                                          ...prev,
-                                          peripheralMonitorSizeCustom: e.target.value,
-                                        }))
-                                      }
-                                      required
-                                      fullWidth
-                                      size="small"
-                                      placeholder="例: 32インチ"
-                                      sx={textFieldRowSx}
-                                    />
-                                  </Box>
-                                </Box>
-                              )}
-                            </Stack>
-                          </Box>
-                        )}
-                        {includesLanCable && (
-                          <Box sx={{ border: "1px solid #e8e8e8", borderRadius: 1, p: 2, bgcolor: "#fff" }}>
-                            <Typography sx={{ fontWeight: 600, fontSize: 15, mb: 1.5 }}>LANケーブル</Typography>
-                            <Stack spacing={2.2}>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                <Typography sx={formRowLabelSx}>最低限の長さ</Typography>
-                                <Box sx={formRowFieldCellSx}>
-                                  <TextField
-                                    select
-                                    value={reasonData.peripheralLanCableLength}
-                                    onChange={(e) =>
-                                      setReasonData((prev) => ({
-                                        ...prev,
-                                        peripheralLanCableLength: e.target.value,
-                                        ...(e.target.value !== "その他" ? { peripheralLanCableLengthCustom: "" } : {}),
-                                      }))
-                                    }
-                                    required
-                                    fullWidth
-                                    size="small"
-                                    sx={textFieldRowSx}
-                                  >
-                                    <MenuItem value="" disabled>選択してください</MenuItem>
-                                    {peripheralLanCableLengthOptions.map((opt) => (
-                                      <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                                    ))}
-                                  </TextField>
-                                </Box>
-                              </Box>
-                              {reasonData.peripheralLanCableLength === "その他" && (
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                                  <Typography sx={formRowLabelSx}>長さ（詳細）</Typography>
-                                  <Box sx={formRowFieldCellSx}>
-                                    <TextField
-                                      value={reasonData.peripheralLanCableLengthCustom}
-                                      onChange={(e) =>
-                                        setReasonData((prev) => ({
-                                          ...prev,
-                                          peripheralLanCableLengthCustom: e.target.value,
-                                        }))
-                                      }
-                                      required
-                                      fullWidth
-                                      size="small"
-                                      placeholder="例: 15m"
-                                      sx={textFieldRowSx}
-                                    />
-                                  </Box>
-                                </Box>
-                              )}
-                            </Stack>
-                          </Box>
-                        )}
-                        {includesMouse && (
-                          <Box sx={{ border: "1px solid #e8e8e8", borderRadius: 1, p: 2, bgcolor: "#fff" }}>
-                            <Typography sx={{ fontWeight: 600, fontSize: 15, mb: 0.5 }}>マウス</Typography>
-                            <Alert severity="info" sx={{ mt: 1 }}>
-                              マウスに関する追加の入力事項はありません。
-                            </Alert>
-                          </Box>
-                        )}
-                        {includesHeadset && (
-                          <Box sx={{ border: "1px solid #e8e8e8", borderRadius: 1, p: 2, bgcolor: "#fff" }}>
-                            <Typography sx={{ fontWeight: 600, fontSize: 15, mb: 0.5 }}>ヘッドセット</Typography>
-                            <Alert severity="info" sx={{ mt: 1 }}>
-                              ヘッドセットに関する追加の入力事項はありません。
-                            </Alert>
-                          </Box>
-                        )}
-                      </Stack>
-                    </Box>
-                  )}
-
-                  <Divider />
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <Typography sx={formRowLabelSx}>貸与開始日</Typography>
-                    <Box sx={formRowFieldCellSx}>
-                      <DatePicker
-                        format="YYYY-MM-DD"
-                        minDate={minSelectableDate}
-                        shouldDisableDate={(date) => !isSelectableBusinessDate(date)}
-                        value={
-                          reasonData.lendingStartDate
-                            ? dayjs(reasonData.lendingStartDate)
-                            : null
+                  <Stack spacing={3}>
+                    {lendingUserReasonBlocks.map((block) => (
+                      <LendingUserReasonBlock
+                        key={block.employeeNumber}
+                        block={block}
+                        reason={
+                          userReasonByEmp[block.employeeNumber] ?? emptyUserReasonFormState()
                         }
-                        onChange={(v) =>
-                          setReasonData((prev) => ({
+                        onChange={(patch) =>
+                          setUserReasonByEmp((prev) => ({
                             ...prev,
-                            lendingStartDate:
-                              v != null && v.isValid() ? v.format("YYYY-MM-DD") : "",
+                            [block.employeeNumber]: {
+                              ...(prev[block.employeeNumber] ?? emptyUserReasonFormState()),
+                              ...patch,
+                            },
                           }))
                         }
-                        views={["year", "month", "day"]}
-                        slotProps={brandDatePickerSlotProps}
-                        sx={{ width: "100%", maxWidth: "100%" }}
-                      />
-                    </Box>
-                  </Box>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <Typography sx={formRowLabelSx}>返却予定日</Typography>
-                    <Box sx={formRowFieldCellSx}>
-                      <DatePicker
-                        format="YYYY-MM-DD"
-                        minDate={returnMinSelectableDate}
-                        shouldDisableDate={(date) => {
-                          if (!isSelectableBusinessDate(date)) return true;
-                          return date.startOf("day").isBefore(returnMinSelectableDate);
-                        }}
-                        value={
-                          reasonData.expectedReturnDate
-                            ? dayjs(reasonData.expectedReturnDate)
-                            : null
+                        formRowLabelSx={formRowLabelSx}
+                        formRowFieldCellSx={formRowFieldCellSx}
+                        textFieldRowSx={textFieldRowSx}
+                        userStaffCategoryOptions={userStaffCategoryOptions}
+                        decisionContractTypeOptions={decisionContractTypeOptions}
+                        decisionWorkContentOptions={decisionWorkContentOptions}
+                        decisionClientEnvOptions={decisionClientEnvOptions}
+                        msOfficeMenuOptionsPool={msOfficeMenuOptionsPool}
+                        smartphoneCameraOptions={smartphoneCameraOptions}
+                        smartphoneUserIdentificationOptions={
+                          smartphoneUserIdentificationOptions
                         }
-                        onChange={(v) =>
-                          setReasonData((prev) => ({
-                            ...prev,
-                            expectedReturnDate:
-                              v != null && v.isValid() ? v.format("YYYY-MM-DD") : "",
-                          }))
-                        }
-                        views={["year", "month", "day"]}
-                        slotProps={brandDatePickerSlotProps}
-                        sx={{ width: "100%", maxWidth: "100%" }}
+                        smartphoneWorkplaceOptions={smartphoneWorkplaceOptions}
+                        peripheralMonitorSizeOptions={peripheralMonitorSizeOptions}
+                        peripheralLanCableLengthOptions={peripheralLanCableLengthOptions}
+                        minSelectableDate={minSelectableDate}
+                        isSelectableBusinessDate={isSelectableBusinessDate}
                       />
-                    </Box>
-                  </Box>
+                    ))}
+                  </Stack>
+
                   <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                     <Typography sx={formRowLabelSx}>申請連携ID</Typography>
                     <Box sx={formRowFieldCellSx}>
@@ -3461,90 +3077,36 @@ export default function Home() {
                   <Typography sx={{ fontWeight: 700, fontSize: 18, pt: 2 }}>申請内容</Typography>
                   <SummaryRow label="申請連携ID" value={reasonData.applicationCorrelationId} />
                   <SummaryRow label="申請理由" value={reasonData.requestReason} />
-                  <Typography sx={{ fontWeight: 700, fontSize: 18, pt: 2 }}>貸与機器</Typography>
-                  {lendingLines.map((line, index) => {
-                    const t = line.equipmentType.trim();
-                    const cat: EquipmentCategory | null =
-                      t && t in EQUIPMENT_CATEGORY_MAP
-                        ? EQUIPMENT_CATEGORY_MAP[t as LendingEquipmentTypeOption]
-                        : null;
+                  <Typography sx={{ fontWeight: 700, fontSize: 18, pt: 2 }}>貸与機器（利用者別）</Typography>
+                  {userMode === "multiple" && (
+                    <SummaryRow label="利用者モード" value="複数" />
+                  )}
+                  {lendingEquipmentUserBlocks.map((block) => {
+                    const userLines = linesForUser(
+                      lendingLines,
+                      block.employeeNumber,
+                      userData.userEmployeeNumber,
+                    );
+                    if (userLines.length === 0) return null;
+                    const ur = userReasonByEmp[block.employeeNumber] ?? emptyUserReasonFormState();
                     return (
                       <Box
-                        key={line.id}
-                        sx={{ border: "1px solid #e0e0e0", borderRadius: 1, p: 2, bgcolor: "#fafafa" }}
+                        key={block.employeeNumber}
+                        sx={{ border: "1px solid #e0e0e0", borderRadius: 1, p: 2, bgcolor: "#fafafa", mb: 2 }}
                       >
                         <Typography sx={{ fontWeight: 700, fontSize: 16, mb: 1, color: "#007D9E" }}>
-                          機器 {index + 1}: {line.equipmentType}
-                          {cat && (
-                            <Typography component="span" sx={{ ml: 1, fontWeight: 400, fontSize: 13, color: "#666" }}>
-                              （{EQUIPMENT_CATEGORY_LABEL[cat]}）
-                            </Typography>
-                          )}
+                          {block.userName}（{block.roleLabel}） {block.employeeNumber}
                         </Typography>
-                        <Stack spacing={0.5}>
-                          {/* PC 固有 */}
-                          {cat === "pc" && (
-                            <>
-                              {userData.userStaffCategory === STAFF_TECHNICAL && (
-                                <>
-                                  <SummaryRow label="契約形態（判定）" value={reasonData.decisionContractType} />
-                                  <SummaryRow label="業務内容" value={reasonData.decisionWorkContent} />
-                                  <SummaryRow label="客先ネットワーク接続の有無" value={reasonData.decisionClientEnv} />
-                                </>
-                              )}
-                              <SummaryRow label="MicrosoftOfficeのエディション" value={reasonData.msOfficeEdition} />
-                              {derivedLicense && decisionResolution.kind === "management_internal" && (
-                                <Box sx={{ pt: 1 }}>
-                                  <PcInitialSettingsTitle />
-                                  <PcInitialSettingsTable userInstall="×" network="○" licenseApply="○" />
-                                </Box>
-                              )}
-                              {derivedLicense && technicalSpecCode !== null && (
-                                <Box sx={{ pt: 1 }}>
-                                  <PcInitialSettingsTitle />
-                                  <PcInitialSettingsTable
-                                    userInstall={LICENSE_SPEC_ROWS[technicalSpecCode].userInstall}
-                                    network={LICENSE_SPEC_ROWS[technicalSpecCode].network}
-                                    licenseApply={LICENSE_SPEC_ROWS[technicalSpecCode].licenseApply}
-                                  />
-                                </Box>
-                              )}
-                            </>
-                          )}
-
-                          {/* スマホ固有 */}
-                          {t === "スマホ" && (
-                            <>
-                              <SummaryRow label="カメラ利用の有無" value={reasonData.smartphoneCameraPresence} />
-                              <SummaryRow label="スマホの利用者の特定の有無" value={reasonData.smartphoneUserIdentification} />
-                              <SummaryRow label="スマホの事業場での利用" value={reasonData.smartphoneWorkplaceUse} />
-                            </>
-                          )}
-
-                          {/* モニター固有 */}
-                          {t === "モニター" && (
+                        <Stack spacing={1}>
+                          {userLines.map((line, index) => (
                             <SummaryRow
-                              label="サイズ"
-                              value={
-                                reasonData.peripheralMonitorSize === "その他"
-                                  ? `その他（${reasonData.peripheralMonitorSizeCustom}）`
-                                  : reasonData.peripheralMonitorSize
-                              }
+                              key={line.id}
+                              label={`機器 ${index + 1}`}
+                              value={line.equipmentType}
                             />
-                          )}
-
-                          {/* LANケーブル固有 */}
-                          {t === "LANケーブル" && (
-                            <SummaryRow
-                              label="最低限の長さ"
-                              value={
-                                reasonData.peripheralLanCableLength === "その他"
-                                  ? `その他（${reasonData.peripheralLanCableLengthCustom}）`
-                                  : reasonData.peripheralLanCableLength
-                              }
-                            />
-                          )}
-
+                          ))}
+                          <SummaryRow label="貸与開始日" value={ur.lendingStartDate} />
+                          <SummaryRow label="返却予定日" value={ur.expectedReturnDate} />
                         </Stack>
                       </Box>
                     );

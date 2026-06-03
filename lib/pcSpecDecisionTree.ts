@@ -29,7 +29,7 @@ export function buildManagementAndTechnicalTree(): SpecTreeNode[] {
       label: "利用者属性: 技術社員",
       children: [
         {
-          label: "第1段階: 契約形態 — 請負準委任（請負に準ずる委任・PC貸与が必要な案件向け）",
+          label: "第1段階: 客先契約形態 — 請負準委任（請負に準ずる委任・PC貸与が必要な案件向け）",
           children: [
             {
               label: "第2段階: 業務内容 — 開発業務用（客先案件を含む開発）",
@@ -60,7 +60,7 @@ export function buildManagementAndTechnicalTree(): SpecTreeNode[] {
           ],
         },
         {
-          label: "第1段階: 契約形態 — 派遣（客先常駐など PC 貸与が必要な派遣）",
+          label: "第1段階: 客先契約形態 — 派遣（客先常駐など PC 貸与が必要な派遣）",
           children: [
             {
               label: "第2段階: 業務内容 — 開発業務用",
@@ -120,7 +120,7 @@ export function buildManagementAndTechnicalTree(): SpecTreeNode[] {
       children: [
         {
           label:
-            "契約形態: 請負準委任（PC貸与が必要な案件）と派遣（客先案件で PC貸与が必要な場合）の別",
+            "客先契約形態: 請負準委任（PC貸与が必要な案件）と派遣（客先案件で PC貸与が必要な場合）の別",
         },
         {
           label: "業務内容: 開発業務用（客先含む）／社内業務用（テクノプロ社内のみ）",

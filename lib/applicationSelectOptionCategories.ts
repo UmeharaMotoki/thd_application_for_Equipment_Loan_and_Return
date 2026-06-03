@@ -13,6 +13,16 @@ export const APPLICATION_SELECT_CATEGORIES = {
   peripheralLanCableLength: "peripheral_lan_cable_length",
   lendingEquipmentType: "lending_equipment_type",
   userStaffCategory: "user_staff_category",
+  /** 機器返却：返却理由（ラジオ／select） */
+  returnReason: "return_reason",
+  /** 機器返却：返却物（メイン機器チェック） */
+  returnMainItem: "return_main_item",
+  /** 機器返却：付属品（code = 親機器の ID） */
+  returnItemAccessory: "return_item_accessory",
+  /** 機器返却：返却用梱包箱（有/無） */
+  returnShippingBox: "return_shipping_box",
+  /** 機器返却：資産管理番号フィールドの表示ラベル（code = 親機器の ID） */
+  returnAssetNumberLabel: "return_asset_number_label",
 } as const;
 
 export type ApplicationSelectCategory =
@@ -35,6 +45,9 @@ export const LENDING_PAGE_FORM_OPTION_CATEGORIES: ApplicationSelectCategory[] = 
 ];
 
 export const RETURN_PAGE_FORM_OPTION_CATEGORIES: ApplicationSelectCategory[] = [
-  APPLICATION_SELECT_CATEGORIES.returnRequestReason,
-  APPLICATION_SELECT_CATEGORIES.lendingEquipmentType,
+  APPLICATION_SELECT_CATEGORIES.returnReason,
+  APPLICATION_SELECT_CATEGORIES.returnMainItem,
+  APPLICATION_SELECT_CATEGORIES.returnItemAccessory,
+  APPLICATION_SELECT_CATEGORIES.returnShippingBox,
+  APPLICATION_SELECT_CATEGORIES.returnAssetNumberLabel,
 ];
