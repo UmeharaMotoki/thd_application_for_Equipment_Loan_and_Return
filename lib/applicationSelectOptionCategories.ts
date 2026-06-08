@@ -23,6 +23,10 @@ export const APPLICATION_SELECT_CATEGORIES = {
   returnShippingBox: "return_shipping_box",
   /** 機器返却：資産管理番号フィールドの表示ラベル（code = 親機器の ID） */
   returnAssetNumberLabel: "return_asset_number_label",
+  /** 変更依頼：変更種別（code = changeKind） */
+  changeRequestKind: "change_request_kind",
+  /** 変更依頼：対象機器（label = 保存値） */
+  changeRequestEquipmentType: "change_request_equipment_type",
 } as const;
 
 export type ApplicationSelectCategory =
@@ -50,4 +54,9 @@ export const RETURN_PAGE_FORM_OPTION_CATEGORIES: ApplicationSelectCategory[] = [
   APPLICATION_SELECT_CATEGORIES.returnItemAccessory,
   APPLICATION_SELECT_CATEGORIES.returnShippingBox,
   APPLICATION_SELECT_CATEGORIES.returnAssetNumberLabel,
+];
+
+export const CHANGE_REQUEST_PAGE_FORM_OPTION_CATEGORIES: ApplicationSelectCategory[] = [
+  APPLICATION_SELECT_CATEGORIES.changeRequestKind,
+  APPLICATION_SELECT_CATEGORIES.changeRequestEquipmentType,
 ];

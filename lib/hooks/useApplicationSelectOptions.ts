@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ApplicationSelectCategory } from "@/lib/applicationSelectOptionCategories";
+import { fetchFormOptionsCached, peekFormOptionsCache } from "@/lib/itServiceMasterDataCache";
 
 export type ApplicationSelectOptionsState = {
   labelsByCategory: Partial<Record<ApplicationSelectCategory, string[]>>;
@@ -13,14 +14,29 @@ export function useApplicationSelectOptions(
   categories: readonly ApplicationSelectCategory[],
 ): ApplicationSelectOptionsState {
   const key = useMemo(() => [...categories].sort().join(","), [categories]);
+
+  const initialFromCache = useMemo(() => {
+    const opt = peekFormOptionsCache(categories);
+    if (!opt) return null;
+    const next: Partial<Record<ApplicationSelectCategory, string[]>> = {};
+    for (const c of categories) {
+      next[c] = (opt[c] ?? []).map((x) => x.label);
+    }
+    return next;
+  }, [categories]);
+
   const [labelsByCategory, setLabelsByCategory] = useState<
     Partial<Record<ApplicationSelectCategory, string[]>>
-  >({});
-  const [loading, setLoading] = useState(true);
+  >(initialFromCache ?? {});
+  const [loading, setLoading] = useState(initialFromCache === null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (categories.length === 0) {
+      setLoading(false);
+      return;
+    }
+    if (peekFormOptionsCache(categories)) {
       setLoading(false);
       return;
     }
@@ -29,17 +45,8 @@ export function useApplicationSelectOptions(
     setError(null);
     void (async () => {
       try {
-        const u = new URL("/api/form-options", window.location.origin);
-        u.searchParams.set("categories", categories.join(","));
-        const res = await fetch(u.toString());
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const data = (await res.json()) as {
-          options?: Record<string, { label: string }[]>;
-        };
+        const opt = (await fetchFormOptionsCached(categories)) ?? {};
         const next: Partial<Record<ApplicationSelectCategory, string[]>> = {};
-        const opt = data.options ?? {};
         for (const c of categories) {
           next[c] = (opt[c] ?? []).map((x) => x.label);
         }
@@ -57,7 +64,7 @@ export function useApplicationSelectOptions(
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, [key, categories]);
 
   return { labelsByCategory, loading, error };
 }

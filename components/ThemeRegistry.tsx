@@ -5,6 +5,7 @@ import { AppRouterCacheProvider } from "@mui/material-nextjs/v16-appRouter";
 import CssBaseline from "@mui/material/CssBaseline";
 import { ThemeProvider } from "@mui/material/styles";
 import { CopyFromPastProvider } from "@/components/it-service/CopyFromPastProvider";
+import { ItServiceTabProvider } from "@/components/it-service/ItServiceTabContext";
 import theme from "@/theme";
 
 export default function ThemeRegistry({
@@ -16,7 +17,9 @@ export default function ThemeRegistry({
     <AppRouterCacheProvider>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <CopyFromPastProvider>{children}</CopyFromPastProvider>
+        <ItServiceTabProvider>
+          <CopyFromPastProvider>{children}</CopyFromPastProvider>
+        </ItServiceTabProvider>
       </ThemeProvider>
     </AppRouterCacheProvider>
   );

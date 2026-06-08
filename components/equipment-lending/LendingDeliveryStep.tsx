@@ -32,7 +32,7 @@ import {
   lendingFormRowFieldCellSx,
   lendingFormRowLabelSx,
   lendingTextFieldRowSx,
-} from "@/app/equipment-lending/lendingFormTypes";
+} from "@/lib/equipment-lending-form/lendingFormTypes";
 
 export default function LendingDeliveryStep({
   brandColor,

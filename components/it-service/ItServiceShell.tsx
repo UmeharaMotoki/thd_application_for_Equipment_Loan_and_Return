@@ -1,9 +1,10 @@
 "use client";
 
-import NextLink from "next/link";
 import { ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { Box, Button, IconButton, Stack, SvgIcon, Typography } from "@mui/material";
 import { useCopyFromPastBridgeOptional } from "@/components/it-service/CopyFromPastProvider";
+import { useItServiceTabOptional } from "@/components/it-service/ItServiceTabContext";
 import { removeNamedRequestArchive } from "@/lib/namedRequestArchives";
 
 const BRAND = "#007D9E";
@@ -48,7 +49,7 @@ const menuButtonInactiveSx = {
   },
 };
 
-export type ItServiceActiveMenu = "lending" | "return";
+export type ItServiceActiveMenu = "lending" | "return" | "change-request";
 
 type ItServiceShellProps = {
   activeMenu: ItServiceActiveMenu;
@@ -58,6 +59,40 @@ type ItServiceShellProps = {
 
 export default function ItServiceShell({ activeMenu, mainTitle, children }: ItServiceShellProps) {
   const copyBridge = useCopyFromPastBridgeOptional();
+  const tabBridge = useItServiceTabOptional();
+  const pathname = usePathname() ?? "";
+  const router = useRouter();
+
+  const isLendingReturnRoute =
+    pathname.startsWith("/equipment-lending") || pathname.startsWith("/equipment-return");
+
+  const menu: ItServiceActiveMenu = pathname.startsWith("/change-request")
+    ? "change-request"
+    : pathname.startsWith("/equipment-return")
+      ? "return"
+      : pathname.startsWith("/equipment-lending")
+        ? "lending"
+        : activeMenu;
+
+  const goLending = () => {
+    if (isLendingReturnRoute && tabBridge) {
+      tabBridge.switchTab("lending");
+      return;
+    }
+    router.push("/equipment-lending");
+  };
+
+  const goReturn = () => {
+    if (isLendingReturnRoute && tabBridge) {
+      tabBridge.switchTab("return");
+      return;
+    }
+    router.push("/equipment-return");
+  };
+
+  const goChangeRequest = () => {
+    router.push("/change-request");
+  };
 
   return (
     <Box sx={{ minHeight: "100vh", backgroundColor: "#ffffff" }}>
@@ -81,7 +116,7 @@ export default function ItServiceShell({ activeMenu, mainTitle, children }: ItSe
         <Stack spacing={2} sx={{ width: 280, alignSelf: "flex-start" }}>
           <Box
             sx={{
-              minHeight: 230,
+              minHeight: 290,
               border: "1px solid #d8d8d8",
               backgroundColor: "#fff",
               px: 2.5,
@@ -94,22 +129,31 @@ export default function ItServiceShell({ activeMenu, mainTitle, children }: ItSe
             <Box sx={{ borderTop: "1px solid #d9d9d9", mb: 2 }} />
             <Stack spacing={2.2} sx={{ alignItems: "center" }}>
               <Button
-                component={NextLink}
-                href="/equipment-lending"
+                type="button"
                 variant="contained"
                 disableElevation
-                sx={activeMenu === "lending" ? menuButtonActiveSx : menuButtonInactiveSx}
+                onClick={goLending}
+                sx={menu === "lending" ? menuButtonActiveSx : menuButtonInactiveSx}
               >
                 機器貸与 申請
               </Button>
               <Button
-                component={NextLink}
-                href="/equipment-return"
+                type="button"
                 variant="contained"
                 disableElevation
-                sx={activeMenu === "return" ? menuButtonActiveSx : menuButtonInactiveSx}
+                onClick={goReturn}
+                sx={menu === "return" ? menuButtonActiveSx : menuButtonInactiveSx}
               >
                 機器返却 申請
+              </Button>
+              <Button
+                type="button"
+                variant="contained"
+                disableElevation
+                onClick={goChangeRequest}
+                sx={menu === "change-request" ? menuButtonActiveSx : menuButtonInactiveSx}
+              >
+                変更依頼 申請
               </Button>
             </Stack>
           </Box>
@@ -132,7 +176,7 @@ export default function ItServiceShell({ activeMenu, mainTitle, children }: ItSe
                   variant="contained"
                   size="small"
                   onClick={() =>
-                    activeMenu === "lending"
+                    menu === "lending"
                       ? copyBridge.openLendingCopyDialog()
                       : copyBridge.openReturnCopyDialog()
                   }

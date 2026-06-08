@@ -8,7 +8,7 @@ import type {
   LendingEquipmentLine,
   ReasonFormData,
   UserFormData,
-} from "@/app/equipment-lending/lendingFormTypes";
+} from "@/lib/equipment-lending-form/lendingFormTypes";
 
 export type BuildLendingRequestBodyInput = {
   applicantData: ApplicantFormData;

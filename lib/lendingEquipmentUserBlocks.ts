@@ -28,6 +28,11 @@ export function newLendingEquipmentLineForUser(employeeNumber: string): LendingE
   };
 }
 
+/** 追加利用者が1名以上いれば API 用に multiple、代表のみなら single */
+export function deriveLendingUserMode(additionalUsers: AdditionalUserRow[]): "single" | "multiple" {
+  return additionalUsers.some((u) => u.userEmployeeNumber.trim()) ? "multiple" : "single";
+}
+
 export function buildLendingEquipmentUserBlocks(
   representative: {
     userName: string;
@@ -35,7 +40,6 @@ export function buildLendingEquipmentUserBlocks(
     userCompanyName: string;
     userDepartmentName: string;
   },
-  userMode: "single" | "multiple",
   additionalUsers: AdditionalUserRow[],
 ): LendingEquipmentUserBlockInfo[] {
   const repEmp = representative.userEmployeeNumber.trim();
@@ -51,18 +55,16 @@ export function buildLendingEquipmentUserBlocks(
     },
   ];
 
-  if (userMode === "multiple") {
-    for (const u of additionalUsers) {
-      const emp = u.userEmployeeNumber.trim();
-      if (!emp) continue;
-      blocks.push({
-        employeeNumber: emp,
-        userName: u.userName.trim() || "追加利用者",
-        roleLabel: "追加",
-        userCompanyName: u.userCompanyName,
-        userDepartmentName: u.userDepartmentName,
-      });
-    }
+  for (const u of additionalUsers) {
+    const emp = u.userEmployeeNumber.trim();
+    if (!emp) continue;
+    blocks.push({
+      employeeNumber: emp,
+      userName: u.userName.trim() || "追加利用者",
+      roleLabel: "追加",
+      userCompanyName: u.userCompanyName,
+      userDepartmentName: u.userDepartmentName,
+    });
   }
 
   return blocks;

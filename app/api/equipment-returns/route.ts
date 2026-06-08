@@ -18,9 +18,76 @@ import { buildPreflightResponse, checkRateLimit, createRateLimitResponse, withCo
 import { normalizeApplicantEmployeeNumber } from "@/lib/requestHistoryAuthz";
 import { validateEquipmentReturnPostAgainstMasters } from "@/lib/equipmentReturnPostMasterValidation";
 import {
+  buildReturnShippingBoxSubmissionPayload,
+  type EquipmentReturnLineWithId,
+} from "@/lib/returnShippingBoxSubmissionPayload";
+import {
+  buildEquipmentReturnSubmissionPayload,
+  shippingBoxSummaryFromPayload,
+} from "@/lib/equipmentReturnSubmissionPayload";
+import { newShippingBoxRequestId } from "@/lib/salesforceReturnShippingBoxPayload";
+import {
   createEquipmentReturnRequestSchema,
   equipmentReturnListQuerySchema,
 } from "@/lib/validators";
+import type { z } from "zod";
+
+type PersistReason = "json-mode" | "db-fallback" | "db-with-json-audit";
+
+async function persistReturnSubmissionArtifacts(args: {
+  body: z.infer<typeof createEquipmentReturnRequestSchema>;
+  requestId: string;
+  applicationCorrelationId: string;
+  lines: EquipmentReturnLineWithId[];
+  persistReason: PersistReason;
+  storageNote?: string;
+}) {
+  const shippingBoxRequestId = newShippingBoxRequestId();
+  const boxPayload = buildReturnShippingBoxSubmissionPayload({
+    body: args.body,
+    equipmentReturnRequestId: args.requestId,
+    applicationCorrelationId: args.applicationCorrelationId,
+    shippingBoxRequestId,
+    lines: args.lines,
+    persistReason: args.persistReason,
+    storageNote: args.storageNote,
+  });
+
+  let boxJsonFileName: string | undefined;
+  if (boxPayload) {
+    const { fileName, fullPath } = await saveSubmissionJsonFile({
+      prefix: "return-shipping-box-request",
+      payload: boxPayload,
+    });
+    boxJsonFileName = fileName;
+    console.info(
+      "[POST /api/equipment-returns] 返却用梱包箱依頼 JSON 保存",
+      fullPath,
+      `lines=${boxPayload.lines.length}`,
+    );
+    console.info(
+      "[POST /api/equipment-returns] Salesforce placeholder payloads (return shipping box)",
+      JSON.stringify(boxPayload.salesforcePayloadsByLine, null, 2),
+    );
+  }
+
+  const returnPayload = buildEquipmentReturnSubmissionPayload({
+    body: args.body,
+    requestId: args.requestId,
+    applicationCorrelationId: args.applicationCorrelationId,
+    lines: args.lines,
+    persistReason: args.persistReason,
+    storageNote: args.storageNote,
+    linkedShippingBoxRequest: shippingBoxSummaryFromPayload(boxPayload, boxJsonFileName),
+  });
+
+  const { fullPath, fileName } = await saveSubmissionJsonFile({
+    prefix: "equipment-return",
+    payload: returnPayload,
+  });
+
+  return { fullPath, fileName, boxPayload, returnPayload };
+}
 
 export async function OPTIONS(req: Request) {
   return buildPreflightResponse(req);
@@ -167,7 +234,11 @@ export async function POST(req: Request) {
     const otherItemsDetail =
       body.otherItemsDetail.trim() || (otherFromLine?.otherDetail ?? "").trim();
 
-    const normalizedLines: Array<{
+    const applicationCorrelationId = body.applicationCorrelationId?.trim() || randomUUID();
+
+    type NormalizedDbLine = {
+      id: string;
+      sortOrder: number;
       equipmentCode: string;
       equipmentLabel: string;
       assetManagementNumber: string;
@@ -177,7 +248,9 @@ export async function POST(req: Request) {
       equipmentName: string;
       lendingDue: Date;
       expectedReturn: Date;
-    }> = [];
+    };
+
+    const normalizedLines: NormalizedDbLine[] = [];
 
     for (let i = 0; i < body.lines.length; i += 1) {
       const row = body.lines[i];
@@ -226,6 +299,8 @@ export async function POST(req: Request) {
       }
 
       normalizedLines.push({
+        id: randomUUID(),
+        sortOrder: i,
         equipmentCode: code,
         equipmentLabel: label,
         assetManagementNumber: row.assetManagementNumber.trim(),
@@ -248,6 +323,20 @@ export async function POST(req: Request) {
       return json({ error: "「その他」を選択した場合は、返却物の詳細を入力してください。" }, { status: 400 });
     }
 
+    const submissionLines: EquipmentReturnLineWithId[] = normalizedLines.map((l) => ({
+      id: l.id,
+      equipmentCode: l.equipmentCode,
+      equipmentLabel: l.equipmentLabel,
+      assetManagementNumber: l.assetManagementNumber,
+      shippingBoxChoice: l.shippingBoxChoice,
+      accessories: JSON.parse(l.accessoriesJson) as string[],
+      otherDetail: l.otherDetail,
+      equipmentName: l.equipmentName,
+      lendingDueDate: l.lendingDue.toISOString().slice(0, 10),
+      expectedReturnDate: l.expectedReturn.toISOString().slice(0, 10),
+      sortOrder: l.sortOrder,
+    }));
+
     const returnCreateData = {
       applicantName: body.applicantName.trim(),
       employeeNumber: body.employeeNumber.trim(),
@@ -264,7 +353,8 @@ export async function POST(req: Request) {
       requestDetail,
       otherItemsDetail,
       lines: {
-        create: normalizedLines.map((l, sortOrder) => ({
+        create: normalizedLines.map((l) => ({
+          id: l.id,
           equipmentCode: l.equipmentCode,
           equipmentLabel: l.equipmentLabel,
           assetManagementNumber: l.assetManagementNumber,
@@ -274,41 +364,35 @@ export async function POST(req: Request) {
           equipmentName: l.equipmentName,
           lendingDueDate: l.lendingDue,
           expectedReturnDate: l.expectedReturn,
-          sortOrder,
+          sortOrder: l.sortOrder,
         })),
       },
     };
 
     const persistReturnAsJson = async (persistReason: "json-mode" | "db-fallback") => {
       const requestId = randomUUID();
-      const { fullPath } = await saveSubmissionJsonFile({
-        prefix: "equipment-return",
-        payload: {
-          schemaVersion: 1,
-          kind: "equipment-return",
-          savedAt: new Date().toISOString(),
-          requestId,
-          persistReason,
-          storageNote:
-            persistReason === "json-mode"
-              ? "DB 未設定モード。`docker/JSON/議事送信` へ保存。"
-              : "DB 保存に失敗したため `docker/JSON/議事送信` へフォールバック保存。",
-          clientRequest: body,
-          lines: normalizedLines.map((l) => ({
-            equipmentCode: l.equipmentCode,
-            equipmentLabel: l.equipmentLabel,
-            assetManagementNumber: l.assetManagementNumber,
-            shippingBoxChoice: l.shippingBoxChoice,
-            accessories: JSON.parse(l.accessoriesJson) as string[],
-            otherDetail: l.otherDetail,
-            equipmentName: l.equipmentName,
-            lendingDueDate: l.lendingDue.toISOString().slice(0, 10),
-            expectedReturnDate: l.expectedReturn.toISOString().slice(0, 10),
-          })),
-        },
+      const storageNote =
+        persistReason === "json-mode"
+          ? "DB 未設定モード。`docker/JSON/議事送信` へ保存。"
+          : "DB 保存に失敗したため `docker/JSON/議事送信` へフォールバック保存。";
+      const { fullPath, boxPayload } = await persistReturnSubmissionArtifacts({
+        body,
+        requestId,
+        applicationCorrelationId,
+        lines: submissionLines,
+        persistReason,
+        storageNote,
       });
       console.info(`[POST /api/equipment-returns] JSON 保存 (${persistReason})`, fullPath);
-      return json({ id: requestId, persistedTo: "json" as const }, { status: 201 });
+      return json(
+        {
+          id: requestId,
+          persistedTo: "json" as const,
+          shippingBoxRequestId: boxPayload?.shippingBoxRequestId ?? null,
+          shippingBoxLineCount: boxPayload?.lines.length ?? 0,
+        },
+        { status: 201 },
+      );
     };
 
     if (useJsonSubmissionOnly()) {
@@ -328,34 +412,25 @@ export async function POST(req: Request) {
         return await persistReturnAsJson("json-mode");
       }
 
-      const { fullPath: jsonDualPath } = await saveSubmissionJsonFile({
-        prefix: "equipment-return",
-        payload: {
-          schemaVersion: 1,
-          kind: "equipment-return",
-          savedAt: new Date().toISOString(),
-          localEquipmentReturnRequestId: createdLocal.id,
-          persistReason: "json-mode",
-          storageNote:
-            "THD_SUBMISSION_MODE=json かつ DATABASE_URL あり。下流 API 用の JSON と、一覧・一時保管用にローカル DB（EquipmentReturnRequest）へ二重保存。",
-          clientRequest: body,
-          lines: normalizedLines.map((l) => ({
-            equipmentCode: l.equipmentCode,
-            equipmentLabel: l.equipmentLabel,
-            assetManagementNumber: l.assetManagementNumber,
-            shippingBoxChoice: l.shippingBoxChoice,
-            accessories: JSON.parse(l.accessoriesJson) as string[],
-            otherDetail: l.otherDetail,
-            equipmentName: l.equipmentName,
-            lendingDueDate: l.lendingDue.toISOString().slice(0, 10),
-            expectedReturnDate: l.expectedReturn.toISOString().slice(0, 10),
-          })),
-        },
+      const { fullPath: jsonDualPath, boxPayload } = await persistReturnSubmissionArtifacts({
+        body,
+        requestId: createdLocal.id,
+        applicationCorrelationId,
+        lines: submissionLines,
+        persistReason: "db-with-json-audit",
+        storageNote:
+          "THD_SUBMISSION_MODE=json かつ DATABASE_URL あり。下流 API 用の JSON と、一覧・一時保管用にローカル DB（EquipmentReturnRequest）へ二重保存。",
       });
       console.info("[POST /api/equipment-returns] JSON+ローカルDB (json-mode)", jsonDualPath);
 
       return json(
-        { id: createdLocal.id, persistedTo: "db", jsonAuditPath: jsonDualPath },
+        {
+          id: createdLocal.id,
+          persistedTo: "db",
+          jsonAuditPath: jsonDualPath,
+          shippingBoxRequestId: boxPayload?.shippingBoxRequestId ?? null,
+          shippingBoxLineCount: boxPayload?.lines.length ?? 0,
+        },
         { status: 201 },
       );
     }
@@ -373,7 +448,23 @@ export async function POST(req: Request) {
       throw dbErr;
     }
 
-    return json({ id: created.id }, { status: 201 });
+    const { boxPayload } = await persistReturnSubmissionArtifacts({
+      body,
+      requestId: created.id,
+      applicationCorrelationId,
+      lines: submissionLines,
+      persistReason: "db-with-json-audit",
+      storageNote: "DB 保存成功。下流連携用 JSON を `docker/JSON/議事送信` に併記保存。",
+    });
+
+    return json(
+      {
+        id: created.id,
+        shippingBoxRequestId: boxPayload?.shippingBoxRequestId ?? null,
+        shippingBoxLineCount: boxPayload?.lines.length ?? 0,
+      },
+      { status: 201 },
+    );
   } catch (e) {
     console.error("[POST /api/equipment-returns]", e);
     const msg = e instanceof Error ? e.message : "";

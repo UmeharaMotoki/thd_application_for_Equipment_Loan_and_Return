@@ -321,7 +321,6 @@ export default function LendingAdditionalUsersBlock({
 }: Props) {
   return (
     <Stack spacing={2}>
-      <Typography sx={{ fontSize: 16, fontWeight: 600 }}>追加利用者</Typography>
       {rows.map((row, index) => (
         <AdditionalUserRowEditor
           key={row.id}

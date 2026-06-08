@@ -11,8 +11,17 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import CopyFromPastRequestsDialog from "@/components/equipment-lending/CopyFromPastRequestsDialog";
-import CopyFromPastReturnRequestsDialog from "@/components/equipment-return/CopyFromPastReturnRequestsDialog";
+import { useItServiceTabOptional } from "@/components/it-service/ItServiceTabContext";
+import dynamic from "next/dynamic";
+
+const CopyFromPastRequestsDialog = dynamic(
+  () => import("@/components/equipment-lending/CopyFromPastRequestsDialog"),
+  { ssr: false },
+);
+const CopyFromPastReturnRequestsDialog = dynamic(
+  () => import("@/components/equipment-return/CopyFromPastReturnRequestsDialog"),
+  { ssr: false },
+);
 import {
   LENDING_PREFILL_SESSION_KEY,
   RETURN_PREFILL_SESSION_KEY,
@@ -66,6 +75,7 @@ export function useRegisterReturnCopyPrefill(fn: (p: EquipmentReturnPrefillPaylo
 
 export function CopyFromPastProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const tabBridge = useItServiceTabOptional();
   const [lendingOpen, setLendingOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [archives, setArchives] = useState<NamedRequestArchive[]>([]);
@@ -106,9 +116,13 @@ export function CopyFromPastProvider({ children }: { children: ReactNode }) {
       } catch {
         /* ignore */
       }
-      router.push("/equipment-lending");
+      if (tabBridge) {
+        tabBridge.switchTab("lending");
+      } else {
+        router.push("/equipment-lending");
+      }
     },
-    [router],
+    [router, tabBridge],
   );
 
   const deliverReturn = useCallback(
@@ -122,9 +136,13 @@ export function CopyFromPastProvider({ children }: { children: ReactNode }) {
       } catch {
         /* ignore */
       }
-      router.push("/equipment-return");
+      if (tabBridge) {
+        tabBridge.switchTab("return");
+      } else {
+        router.push("/equipment-return");
+      }
     },
-    [router],
+    [router, tabBridge],
   );
 
   const applyFromNamedArchive = useCallback(

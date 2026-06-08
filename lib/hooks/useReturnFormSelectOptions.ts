@@ -6,6 +6,7 @@ import {
   RETURN_PAGE_FORM_OPTION_CATEGORIES,
   type ApplicationSelectCategory,
 } from "@/lib/applicationSelectOptionCategories";
+import { fetchFormOptionsCached, peekFormOptionsCache } from "@/lib/itServiceMasterDataCache";
 
 export type FormSelectOption = { code: string | null; label: string };
 
@@ -18,39 +19,46 @@ export type ReturnFormSelectOptionsState = {
   ready: boolean;
 };
 
+function optionsFromCache(
+  opt: Record<string, { label: string; code?: string | null }[]>,
+): Partial<Record<ApplicationSelectCategory, FormSelectOption[]>> {
+  const next: Partial<Record<ApplicationSelectCategory, FormSelectOption[]>> = {};
+  for (const c of RETURN_PAGE_FORM_OPTION_CATEGORIES) {
+    next[c] = (opt[c] ?? []).map((x) => ({
+      code: x.code ?? null,
+      label: x.label,
+    }));
+  }
+  return next;
+}
+
 export function useReturnFormSelectOptions(): ReturnFormSelectOptionsState {
   const key = useMemo(() => [...RETURN_PAGE_FORM_OPTION_CATEGORIES].sort().join(","), []);
+
+  const initialFromCache = useMemo(() => {
+    const opt = peekFormOptionsCache(RETURN_PAGE_FORM_OPTION_CATEGORIES);
+    return opt ? optionsFromCache(opt) : null;
+  }, []);
+
   const [optionsByCategory, setOptionsByCategory] = useState<
     Partial<Record<ApplicationSelectCategory, FormSelectOption[]>>
-  >({});
-  const [loading, setLoading] = useState(true);
+  >(initialFromCache ?? {});
+  const [loading, setLoading] = useState(initialFromCache === null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (peekFormOptionsCache(RETURN_PAGE_FORM_OPTION_CATEGORIES)) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
     void (async () => {
       try {
-        const u = new URL("/api/form-options", window.location.origin);
-        u.searchParams.set("categories", RETURN_PAGE_FORM_OPTION_CATEGORIES.join(","));
-        const res = await fetch(u.toString());
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const data = (await res.json()) as {
-          options?: Record<string, FormSelectOption[]>;
-        };
-        const next: Partial<Record<ApplicationSelectCategory, FormSelectOption[]>> = {};
-        const opt = data.options ?? {};
-        for (const c of RETURN_PAGE_FORM_OPTION_CATEGORIES) {
-          next[c] = (opt[c] ?? []).map((x) => ({
-            code: x.code ?? null,
-            label: x.label,
-          }));
-        }
+        const opt = (await fetchFormOptionsCached(RETURN_PAGE_FORM_OPTION_CATEGORIES)) ?? {};
         if (!cancelled) {
-          setOptionsByCategory(next);
+          setOptionsByCategory(optionsFromCache(opt));
           setLoading(false);
         }
       } catch {

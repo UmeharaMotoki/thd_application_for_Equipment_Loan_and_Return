@@ -122,6 +122,7 @@ export const createEquipmentReturnRequestSchema = z.object({
   requestReason: requiredString,
   requestDetail: optionalString,
   otherItemsDetail: optionalString,
+  applicationCorrelationId: z.string().uuid().optional(),
   lines: z.array(returnLineSchema).min(1),
 });
 
@@ -177,3 +178,86 @@ export const equipmentReturnListQuerySchema = z.object({
 export const equipmentReturnDetailQuerySchema = z.object({
   applicantEmployeeNumber: z.string().trim().min(1, "申請者社員番号が必要です。"),
 });
+
+const changeRequestUserSchema = z.object({
+  userName: requiredString,
+  userEmployeeNumber: requiredString,
+  userCompanyName: optionalString,
+  userDepartmentName: optionalString,
+  userDepartmentCode: optionalString,
+  userCostDeptName: optionalString,
+  userCostDeptCode: optionalString,
+});
+
+export const createChangeRequestSchema = z
+  .object({
+    applicantName: requiredString,
+    employeeNumber: requiredString,
+    companyName: requiredString,
+    departmentName: requiredString,
+    address: requiredString,
+    applicantJobTitle: optionalString,
+    applicantEmail: optionalString,
+    applicantPhone: optionalString,
+    changeKind: z.enum(["user_change", "cost_dept_change", "both", "period_extension"]),
+    currentUser: changeRequestUserSchema,
+    newUser: changeRequestUserSchema,
+    equipmentTypes: z.array(requiredString).min(1, "対象機器を1件以上選択してください。"),
+    assetAmountYen: z.number().int().min(0).nullable().optional(),
+    periodExtensionCurrentEndDate: optionalString,
+    periodExtensionNewEndDate: optionalString,
+    applicationCorrelationId: z.string().uuid().optional(),
+    flags: z
+      .object({
+        deptAndCostDeptWarning: z.boolean().optional().default(false),
+      })
+      .optional()
+      .default({ deptAndCostDeptWarning: false }),
+  })
+  .superRefine((data, ctx) => {
+    if (data.changeKind === "cost_dept_change" || data.changeKind === "both") {
+      if (data.assetAmountYen == null) {
+        ctx.addIssue({
+          code: "custom",
+          message: "経費負担部門の変更には資産金額（円）の入力が必要です。",
+          path: ["assetAmountYen"],
+        });
+      }
+    }
+    if (data.changeKind === "user_change" || data.changeKind === "both") {
+      if (
+        data.currentUser.userEmployeeNumber.trim() === data.newUser.userEmployeeNumber.trim()
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "使用者変更の場合、現利用者と変更後利用者は異なる社員番号を指定してください。",
+          path: ["newUser", "userEmployeeNumber"],
+        });
+      }
+    }
+    if (data.changeKind === "period_extension") {
+      const current = (data.periodExtensionCurrentEndDate ?? "").trim();
+      const next = (data.periodExtensionNewEndDate ?? "").trim();
+      if (!current) {
+        ctx.addIssue({
+          code: "custom",
+          message: "現在の返却予定日を入力してください。",
+          path: ["periodExtensionCurrentEndDate"],
+        });
+      }
+      if (!next) {
+        ctx.addIssue({
+          code: "custom",
+          message: "延長後の返却予定日を入力してください。",
+          path: ["periodExtensionNewEndDate"],
+        });
+      }
+      if (current && next && next <= current) {
+        ctx.addIssue({
+          code: "custom",
+          message: "延長後の返却予定日は現在の返却予定日より後の日付にしてください。",
+          path: ["periodExtensionNewEndDate"],
+        });
+      }
+    }
+  });

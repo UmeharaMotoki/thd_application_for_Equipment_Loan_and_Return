@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { FALLBACK_EMPLOYMENT_TYPE_LABELS } from "@/lib/formOptionsStaticFallback";
+import {
+  fetchEmploymentTypeLabelsCached,
+  peekEmploymentTypeLabelsCache,
+} from "@/lib/itServiceMasterDataCache";
 
 export type EmploymentTypeLabelsState = {
   labels: string[];
@@ -10,22 +14,22 @@ export type EmploymentTypeLabelsState = {
 };
 
 export function useEmploymentTypeLabels(): EmploymentTypeLabelsState {
-  const [labels, setLabels] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = peekEmploymentTypeLabelsCache();
+  const [labels, setLabels] = useState<string[]>(cached ?? []);
+  const [loading, setLoading] = useState(cached === null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    if (peekEmploymentTypeLabelsCache()) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     void (async () => {
       try {
-        const res = await fetch(new URL("/api/master/employment-types", window.location.origin));
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const data = (await res.json()) as { items?: { label: string }[] };
-        const list = (data.items ?? []).map((x) => x.label).filter((s) => s.trim().length > 0);
+        const list = await fetchEmploymentTypeLabelsCached();
         if (!cancelled) {
           setLabels(list.length > 0 ? list : [...FALLBACK_EMPLOYMENT_TYPE_LABELS]);
           setLoading(false);

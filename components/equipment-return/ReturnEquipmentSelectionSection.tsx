@@ -13,6 +13,7 @@ import {
   Stack,
   TextField,
   Typography,
+  Alert,
 } from "@mui/material";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import dayjs from "dayjs";
@@ -23,6 +24,11 @@ import {
   RETURN_OTHER_EQUIPMENT_CODE,
   RETURN_SHIPPING_BOX_EQUIPMENT_CODES,
 } from "@/lib/returnEquipmentFormConstants";
+import { RETURN_SHIPPING_BOX_AUTO_REQUEST_NOTICE } from "@/lib/returnShippingBoxConstants";
+import {
+  isReturnStorageMediaEquipmentCode,
+  RETURN_STORAGE_MEDIA_DISPOSAL_NOTICE,
+} from "@/lib/returnStorageMediaConstants";
 import type {
   ReturnEquipmentLineForm,
   ReturnEquipmentSelectionState,
@@ -196,6 +202,9 @@ export default function ReturnEquipmentSelectionSection({
 
               {hasSelection && (
                 <>
+                  {isReturnStorageMediaEquipmentCode(code) && (
+                    <Alert severity="warning">{RETURN_STORAGE_MEDIA_DISPOSAL_NOTICE}</Alert>
+                  )}
                   <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                     <Typography sx={formRowLabelSx}>
                       貸与期限{" "}
@@ -333,7 +342,7 @@ export default function ReturnEquipmentSelectionSection({
                         </Typography>
                       </FormLabel>
                       <Typography sx={{ fontSize: 13, color: "#666", mb: 1 }}>
-                        ※返却用梱包箱が無い場合、ITサービス依頼＞箱関連申請にてご依頼ください。
+                        ※{RETURN_SHIPPING_BOX_AUTO_REQUEST_NOTICE}
                       </Typography>
                       <RadioGroup
                         row

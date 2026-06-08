@@ -342,3 +342,56 @@ model ApplicationSelectOption {
   @@index([category, isActive, sortOrder])
   @@map("application_select_option")
 }
+
+/// 変更依頼（使用者変更・経費負担部門変更）
+model ChangeRequest {
+  id                       String @id @default(cuid())
+  applicationCorrelationId String @unique
+
+  applicantName       String
+  employeeNumber      String
+  companyName         String
+  departmentName      String
+  address             String
+  applicantJobTitle   String @default("")
+  applicantEmail      String @default("")
+  applicantPhone      String @default("")
+
+  /// user_change | cost_dept_change | both | period_extension
+  changeKind String
+
+  currentUserName           String
+  currentUserEmployeeNumber String
+  currentUserCompanyName    String @default("")
+  currentUserDepartmentName String @default("")
+  currentUserDepartmentCode String @default("")
+  currentUserCostDeptName   String @default("")
+  currentUserCostDeptCode   String @default("")
+
+  newUserName           String
+  newUserEmployeeNumber String
+  newUserCompanyName    String @default("")
+  newUserDepartmentName String @default("")
+  newUserDepartmentCode String @default("")
+  newUserCostDeptName   String @default("")
+  newUserCostDeptCode   String @default("")
+
+  /// 対象機器種別（label の JSON 配列）
+  equipmentTypesJson String @default("[]")
+
+  /// 資産金額（円）。経費負担部門変更時
+  assetAmountYen               Int?
+  requiresAccountingApproval   Boolean @default(false)
+
+  /// 期間延長（changeKind=period_extension）
+  periodExtensionCurrentEndDate DateTime? @db.Date
+  periodExtensionNewEndDate     DateTime? @db.Date
+
+  /// 経理部発行資料（JSON 配列: storedFileName, originalFileName, relativePath, sizeBytes）
+  accountingAttachmentsJson String @default("[]")
+
+  createdAt DateTime @default(now())
+
+  @@index([employeeNumber, createdAt])
+  @@map("change_request")
+}

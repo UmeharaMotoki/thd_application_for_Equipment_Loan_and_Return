@@ -17,7 +17,7 @@ import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import dayjs from "dayjs";
 import "dayjs/locale/ja";
-import ItServiceShell from "@/components/it-service/ItServiceShell";
+import NoticeBulletList from "@/components/it-service/NoticeBulletList";
 import { useRegisterReturnCopyPrefill } from "@/components/it-service/CopyFromPastProvider";
 import { normalizeEmployeeSearchInput } from "@/lib/employeeSearchNormalize";
 import { EQUIPMENT_RETURN_WARNINGS } from "@/lib/equipmentReturnWarnings";
@@ -36,6 +36,7 @@ import {
   validateReturnEquipmentSelection,
 } from "@/lib/returnEquipmentSelectionValidation";
 import { RETURN_OTHER_EQUIPMENT_CODE } from "@/lib/returnEquipmentFormConstants";
+import { lineNeedsShippingBoxRequest } from "@/lib/returnShippingBoxConstants";
 import ReturnEquipmentSelectionSection from "@/components/equipment-return/ReturnEquipmentSelectionSection";
 
 type ApplicantFormData = {
@@ -118,7 +119,11 @@ const formRowLabelSx = { width: 170, flexShrink: 0, fontSize: 18 } as const;
 const formRowFieldCellSx = { flex: 1, minWidth: 0 } as const;
 
 /** 空ボディや HTML エラーでも落ちないようレスポンスを解釈 */
-async function parseApiJson(response: Response): Promise<{ id?: string; error?: string }> {
+async function parseApiJson(response: Response): Promise<{
+  id?: string;
+  error?: string;
+  shippingBoxLineCount?: number;
+}> {
   const text = await response.text();
   if (!text.trim()) {
     return {
@@ -227,13 +232,16 @@ export default function EquipmentReturnApplication() {
   }, []);
 
   useEffect(() => {
-    const payload: DraftPayload = {
-      applicant: applicantData,
-      user: userData,
-      returnEquipment,
-      returnReason: returnReasonData,
-    };
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+    const t = window.setTimeout(() => {
+      const payload: DraftPayload = {
+        applicant: applicantData,
+        user: userData,
+        returnEquipment,
+        returnReason: returnReasonData,
+      };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+    }, 400);
+    return () => window.clearTimeout(t);
   }, [applicantData, userData, returnEquipment, returnReasonData]);
 
   const equipmentStepOk = useMemo(() => {
@@ -241,6 +249,17 @@ export default function EquipmentReturnApplication() {
     if (!returnOptionsReady) return false;
     return isReturnEquipmentSelectionComplete(returnEquipment, shippingBoxLabelSet);
   }, [returnReasonData.requestReason, returnOptionsReady, returnEquipment, shippingBoxLabelSet]);
+
+  const autoShippingBoxRequestCount = useMemo(
+    () =>
+      returnEquipment.lines.filter((line) =>
+        lineNeedsShippingBoxRequest({
+          equipmentCode: line.equipmentCode,
+          shippingBoxChoice: line.shippingBoxChoice,
+        }),
+      ).length,
+    [returnEquipment.lines],
+  );
 
   const showApplicantEmployeeField =
     revealApplicantEmployeeField && applicantData.applicantName.trim().length > 0;
@@ -523,7 +542,15 @@ export default function EquipmentReturnApplication() {
       if (!response.ok) {
         throw new Error(data.error ?? "登録に失敗しました。");
       }
-      setMessage({ type: "success", text: "機器返却申請を登録しました。" });
+      const boxCount =
+        typeof data.shippingBoxLineCount === "number" ? data.shippingBoxLineCount : 0;
+      setMessage({
+        type: "success",
+        text:
+          boxCount > 0
+            ? `機器返却申請を登録しました。返却用梱包箱の送付依頼を ${boxCount} 件あわせて作成しました。`
+            : "機器返却申請を登録しました。",
+      });
       setApplicantData(initialApplicant);
       setUserData(initialUser);
       setReturnEquipment(emptyReturnEquipmentSelection());
@@ -586,7 +613,6 @@ export default function EquipmentReturnApplication() {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="ja">
-      <ItServiceShell activeMenu="return" mainTitle="ITサービス依頼　機器返却 申請">
         {(formOptionsError ?? employmentTypesError) && (
           <Alert severity="warning" sx={{ mb: 2 }}>
             {formOptionsError ?? employmentTypesError}
@@ -598,29 +624,7 @@ export default function EquipmentReturnApplication() {
             <Typography sx={{ fontSize: 24, mb: 1.2, padding: "20px 0 20px 0" }}>
               Q. 以下の注意事項をご確認のうえ、申請にお進みください。
             </Typography>
-            <Stack spacing={1.2} sx={{ pl: "75px", pr: 2 }}>
-              {EQUIPMENT_RETURN_WARNINGS.map((warning) => (
-                <Box
-                  key={warning}
-                  sx={{ display: "flex", alignItems: "flex-start", gap: 1.25 }}
-                >
-                  <Box
-                    component="span"
-                    sx={{
-                      flexShrink: 0,
-                      mt: "10px",
-                      width: 11,
-                      height: 11,
-                      borderRadius: "50%",
-                      bgcolor: "#007D9E",
-                    }}
-                  />
-                  <Typography sx={{ fontSize: 18, color: "#333", flex: 1, lineHeight: 1.65 }}>
-                    {warning}
-                  </Typography>
-                </Box>
-              ))}
-            </Stack>
+            <NoticeBulletList items={EQUIPMENT_RETURN_WARNINGS} />
             <Box
               sx={{
                 pt: "15px",
@@ -1162,6 +1166,12 @@ export default function EquipmentReturnApplication() {
                       )}
                     </Box>
                   ))}
+                {autoShippingBoxRequestCount > 0 && (
+                  <Alert severity="info">
+                    返却用梱包箱「無」の機器が {autoShippingBoxRequestCount}{" "}
+                    件あります。登録と同時に梱包箱送付依頼が自動作成されます。
+                  </Alert>
+                )}
                 {message && <Alert severity={message.type}>{message.text}</Alert>}
                 <Box sx={{ display: "flex", justifyContent: "center", gap: 2, pt: 2, pb: 2 }}>
                   <Button
@@ -1204,7 +1214,6 @@ export default function EquipmentReturnApplication() {
             </Box>
           </>
         )}
-      </ItServiceShell>
     </LocalizationProvider>
   );
 }
